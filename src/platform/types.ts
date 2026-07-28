@@ -98,10 +98,17 @@ export interface Platform {
   /** Drag and drop over the window. */
   onDrop(handler: (payload: DropPayload) => void): Promise<() => void>
   /**
-   * Intercepts a window close. The handler resolves true to allow it. The web
-   * build relies on `beforeunload` instead and returns a no-op.
+   * Intercepts a window close.
+   *
+   * `shouldBlock` must be synchronous: the host decides whether to cancel the
+   * close before any await, and when it returns false the window closes through
+   * the host's own path. `confirm` then resolves true to proceed with closing.
+   * The web build relies on `beforeunload` instead and returns a no-op.
    */
-  onCloseRequest(handler: () => Promise<boolean>): Promise<() => void>
+  onCloseRequest(
+    shouldBlock: () => boolean,
+    confirm: () => Promise<boolean>,
+  ): Promise<() => void>
 }
 
 export const IMAGE_EXTENSIONS = /\.(png|jpe?g|webp|gif|bmp|heic|heif|tiff?|avif)$/i

@@ -173,13 +173,28 @@ export function createTauriPlatform(): Platform {
 
     onMenu: (handler) => native.onMenu(handler),
 
-    async onCloseRequest(handler) {
+    async onCloseRequest(shouldBlock, confirm) {
       const appWindow = getCurrentWindow()
+      let allowClose = false
+
       return appWindow.onCloseRequested(async (event) => {
-        // Always block first: the decision is async, and the window would be
-        // gone before the dialog returned.
+        // With nothing to lose, stay out of the way entirely: Tauri closes the
+        // window itself and we never need the destroy permission.
+        if (allowClose || !shouldBlock()) return
+
+        // preventDefault() has to happen before the first await, or the window
+        // is gone by the time the dialog answers.
         event.preventDefault()
-        if (await handler()) await appWindow.destroy()
+        if (!(await confirm())) return
+
+        allowClose = true
+        try {
+          await appWindow.destroy()
+        } catch {
+          // Falls back to a plain close, which re-fires this handler — the
+          // flag above lets that second pass through.
+          await appWindow.close()
+        }
       })
     },
 

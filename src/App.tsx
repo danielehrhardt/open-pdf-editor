@@ -224,14 +224,16 @@ export default function App() {
 
     let unlisten: (() => void) | undefined
     void (async () => {
-      unlisten = await platform().onCloseRequest(async () => {
-        const s = useApp.getState()
-        if (!s.dirty) return true
-        const discard = await platform().confirmDiscard(s.fileName)
-        // Clear the flag so the follow-up close is not blocked again.
-        if (discard) useApp.setState({ dirty: false })
-        return discard
-      })
+      unlisten = await platform().onCloseRequest(
+        () => useApp.getState().dirty,
+        async () => {
+          const s = useApp.getState()
+          const discard = await platform().confirmDiscard(s.fileName)
+          // Clear the flag so a follow-up close is not blocked again.
+          if (discard) useApp.setState({ dirty: false })
+          return discard
+        },
+      )
     })()
 
     return () => {
