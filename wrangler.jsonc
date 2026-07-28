@@ -1,0 +1,15 @@
+{
+  // Inkwell ships as a static, assets-only Worker: there is no server-side
+  // module, just the built SPA plus the header rules in public/_headers.
+  // The name must match the Worker in the dashboard or Workers Builds fails.
+  "name": "open-pdf-editor",
+  "compatibility_date": "2026-07-28",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application"
+  },
+  "observability": {
+    "enabled": true
+  }
+}

@@ -13,7 +13,7 @@
     "preview": "vite preview --port 4173",
     "web:build": "npm run build",
     "web:preview": "npm run build && vite preview --port 4173",
-    "web:deploy": "npm run build && wrangler pages deploy dist --project-name inkwell",
+    "web:deploy": "npm run build && wrangler deploy",
     "tauri": "tauri",
     "app:dev": "tauri dev",
     "app:build": "tauri build",
