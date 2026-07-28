@@ -1,7 +1,7 @@
 /** Primary tool strip: what to place, history, zoom and page navigation. */
 import { useEffect, useState } from 'react'
 
-import * as native from '../lib/native'
+import { platform } from '../platform'
 import { bytesToDataUrl, guessMime, loadImage } from '../lib/image'
 import { useApp } from '../state/store'
 import { useLibrary } from '../state/library'
@@ -68,18 +68,17 @@ export function Toolbar() {
   }
 
   const pickImage = async () => {
-    const path = await native.pickImage()
-    if (!path) return
     try {
-      const bytes = await native.readFile(path)
-      const src = bytesToDataUrl(bytes, guessMime(path))
+      const picked = await platform().openImage()
+      if (!picked) return
+      const src = bytesToDataUrl(picked.bytes, guessMime(picked.name))
       const img = await loadImage(src)
       armStamp({
         src,
         aspect: img.naturalWidth / img.naturalHeight || 1,
         kind: 'image',
         width: 200,
-        label: path.split('/').pop() ?? 'Image',
+        label: picked.name,
       })
       toast('Click on the page to place the image.', 'info')
     } catch (err) {

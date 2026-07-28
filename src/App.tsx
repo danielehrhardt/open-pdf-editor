@@ -1,11 +1,9 @@
-/** Application shell: wiring between the OS (menus, file drops) and the UI. */
+/** Application shell: wiring between the host (menus, file drops) and the UI. */
 import { useCallback, useEffect, useState } from 'react'
-import { getCurrentWebview } from '@tauri-apps/api/webview'
-import { getCurrentWindow } from '@tauri-apps/api/window'
-import { confirm } from '@tauri-apps/plugin-dialog'
 
 import { crossStamp } from './lib/stamps'
-import * as native from './lib/native'
+import { bytesToDataUrl, guessMime } from './lib/image'
+import { isImageName, isPdfName, platform, type DroppedFile } from './platform'
 import { useApp } from './state/store'
 import { useLibrary } from './state/library'
 import { Rail } from './components/Rail'
@@ -17,8 +15,6 @@ import { Toolbar } from './components/Toolbar'
 import { Viewer } from './components/Viewer'
 import { Welcome } from './components/Welcome'
 import { DocIcon } from './components/Icons'
-
-const IMAGE_EXTENSIONS = /\.(png|jpe?g|webp|gif|bmp|heic|tiff?)$/i
 
 /**
  * Signing needs the library, so route it through the toolbar button that owns
@@ -32,144 +28,96 @@ export default function App() {
   const loadingLabel = useApp((s) => s.loadingLabel)
   const sidebar = useApp((s) => s.sidebar)
   const studioOpen = useApp((s) => s.studioOpen)
+  const refreshRecents = useApp((s) => s.refreshRecents)
   const [dragging, setDragging] = useState(false)
 
   const loadLibrary = useLibrary((s) => s.load)
 
   useEffect(() => {
     void loadLibrary()
-  }, [loadLibrary])
+    void refreshRecents()
+  }, [loadLibrary, refreshRecents])
 
-  const openViaDialog = useCallback(async () => {
-    try {
-      const path = await native.pickPdf()
-      if (path) await useApp.getState().openPath(path)
-    } catch (err) {
-      useApp.getState().toast(err instanceof Error ? err.message : 'Could not open that file.', 'error')
-    }
-  }, [])
+  const openViaDialog = useCallback(() => void useApp.getState().openDialog(), [])
 
-  const acceptPaths = useCallback((paths: string[]) => {
+  const acceptFiles = useCallback(async (files: DroppedFile[]) => {
     const state = useApp.getState()
-    const pdf = paths.find((p) => p.toLowerCase().endsWith('.pdf'))
+
+    const pdf = files.find((f) => isPdfName(f.name))
     if (pdf) {
-      void state.openPath(pdf)
+      try {
+        await state.openFile({
+          name: pdf.name,
+          bytes: await pdf.read(),
+          ref: pdf.ref,
+          // A dropped file with no handle cannot be written back to.
+          writable: pdf.ref !== null,
+          location: '',
+        })
+      } catch (err) {
+        state.toast(err instanceof Error ? err.message : 'Could not open that PDF.', 'error')
+      }
       return
     }
-    const image = paths.find((p) => IMAGE_EXTENSIONS.test(p))
+
+    const image = files.find((f) => isImageName(f.name))
     if (image) {
-      // The signature studio listens for this while it is open.
-      if (!state.studioOpen) state.setStudioOpen(true)
-      // Give the studio a tick to mount its listener.
-      setTimeout(
-        () => window.dispatchEvent(new CustomEvent('inkwell:image', { detail: image })),
-        60,
-      )
+      try {
+        const src = bytesToDataUrl(await image.read(), guessMime(image.name))
+        if (!state.studioOpen) state.setStudioOpen(true)
+        // Give the studio a tick to mount its listener.
+        setTimeout(() => window.dispatchEvent(new CustomEvent('inkwell:image', { detail: src })), 60)
+      } catch (err) {
+        state.toast(err instanceof Error ? err.message : 'Could not read that image.', 'error')
+      }
       return
     }
+
     state.toast('Inkwell opens PDFs — drop a .pdf file.', 'error')
   }, [])
 
-  // Files handed over by Finder ("Open With", dock drop).
+  // Files handed over by the OS (Finder "Open With", the PWA launch queue).
   useEffect(() => {
-    if (!native.isTauri()) return
     let unlisten: (() => void) | undefined
-
     void (async () => {
-      const pending = await native.takePendingOpen().catch(() => [] as string[])
-      if (pending.length > 0) acceptPaths(pending)
-      unlisten = await native.onOpenFile(acceptPaths)
+      unlisten = await platform().onOpenExternal((opened) => {
+        const first = opened[0]
+        if (first) void useApp.getState().openFile(first)
+      })
     })()
-
     return () => unlisten?.()
-  }, [acceptPaths])
+  }, [])
 
-  // Native drag and drop onto the window.
+  // Drag and drop onto the window.
   useEffect(() => {
-    if (!native.isTauri()) return
     let unlisten: (() => void) | undefined
-
     void (async () => {
-      unlisten = await getCurrentWebview().onDragDropEvent((event) => {
-        if (event.payload.type === 'over') setDragging(true)
-        else if (event.payload.type === 'leave') setDragging(false)
-        else if (event.payload.type === 'drop') {
+      unlisten = await platform().onDrop((payload) => {
+        if (payload.phase === 'over') setDragging(true)
+        else if (payload.phase === 'leave') setDragging(false)
+        else if (payload.files) {
           setDragging(false)
-          acceptPaths(event.payload.paths)
+          void acceptFiles(payload.files)
         }
       })
     })()
-
     return () => unlisten?.()
-  }, [acceptPaths])
+  }, [acceptFiles])
 
-  // Menu commands.
+  // Native menu commands (desktop only).
   useEffect(() => {
-    if (!native.isTauri()) return
     let unlisten: (() => void) | undefined
-
     void (async () => {
-      unlisten = await native.onMenu((id) => {
-        const s = useApp.getState()
-        switch (id) {
-          case 'open':
-            void openViaDialog()
-            break
-          case 'save':
-            if (s.status === 'ready') void s.save('save')
-            break
-          case 'save-as':
-            if (s.status === 'ready') void s.save('save-as')
-            break
-          case 'close-doc':
-            s.closeDocument()
-            break
-          case 'undo':
-            s.undo()
-            break
-          case 'redo':
-            s.redo()
-            break
-          case 'delete-selection':
-            if (s.selectedId) s.removeElement(s.selectedId)
-            break
-          case 'tool-signature':
-            triggerSign()
-            break
-          case 'tool-text':
-            s.setTool('text')
-            break
-          case 'tool-date':
-            s.setTool('date')
-            break
-          case 'tool-check':
-            s.armStamp(null)
-            s.setTool('check')
-            break
-          case 'manage-signatures':
-            s.setStudioOpen(true)
-            break
-          case 'zoom-in':
-            s.zoomBy(2)
-            break
-          case 'zoom-out':
-            s.zoomBy(0.5)
-            break
-          case 'zoom-fit':
-            s.setZoom(s.zoom, 'width')
-            break
-          case 'toggle-sidebar':
-            s.toggleSidebar()
-            break
-        }
-      })
+      unlisten = await platform().onMenu((id) => runCommand(id))
     })()
-
     return () => unlisten?.()
-  }, [openViaDialog])
+  }, [])
 
-  // In-window keyboard handling for things the menu does not own.
+  // Keyboard handling. The desktop menu owns ⌘-accelerators; on the web this
+  // is the only place they exist, so bind them here too.
   useEffect(() => {
+    const hasMenu = platform().hasNativeMenu
+
     const onKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null
       const typing =
@@ -187,6 +135,17 @@ export default function App() {
           s.setTool('select')
         } else if (s.selectedId) s.select(null)
         return
+      }
+
+      const mod = e.metaKey || e.ctrlKey
+
+      if (mod && !hasMenu) {
+        const command = webAccelerator(e)
+        if (command) {
+          e.preventDefault()
+          runCommand(command)
+          return
+        }
       }
 
       if (typing || s.studioOpen) return
@@ -207,7 +166,7 @@ export default function App() {
         return
       }
 
-      if (e.metaKey || e.ctrlKey || e.altKey) return
+      if (mod || e.altKey) return
 
       // Single-key tool switches, mirroring the toolbar order.
       switch (e.key.toLowerCase()) {
@@ -250,42 +209,40 @@ export default function App() {
       const title = s.status === 'ready' ? `${s.dirty ? '• ' : ''}${s.fileName}` : 'Inkwell'
       if (title === last) return
       last = title
-      document.title = title
-      if (native.isTauri()) void getCurrentWindow().setTitle(title).catch(() => {})
+      platform().setWindowTitle(title)
     }
     apply(useApp.getState())
     return useApp.subscribe(apply)
   }, [])
 
-  // Never let unsaved marks disappear with the window.
+  // Never let unsaved marks disappear with the window or the tab.
   useEffect(() => {
-    if (!native.isTauri()) return
-    let unlisten: (() => void) | undefined
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (useApp.getState().dirty) e.preventDefault()
+    }
+    window.addEventListener('beforeunload', onBeforeUnload)
 
+    let unlisten: (() => void) | undefined
     void (async () => {
-      const appWindow = getCurrentWindow()
-      unlisten = await appWindow.onCloseRequested(async (event) => {
+      unlisten = await platform().onCloseRequest(async () => {
         const s = useApp.getState()
-        if (!s.dirty) return
-        event.preventDefault()
-        const discard = await confirm(
-          `“${s.fileName}” has unsaved marks. Close it anyway?`,
-          { title: 'Unsaved changes', kind: 'warning', okLabel: 'Discard', cancelLabel: 'Keep editing' },
-        )
-        if (discard) {
-          // The guard re-runs on the next request, so clear the flag first.
-          useApp.setState({ dirty: false })
-          await appWindow.destroy()
-        }
+        if (!s.dirty) return true
+        const discard = await platform().confirmDiscard(s.fileName)
+        // Clear the flag so the follow-up close is not blocked again.
+        if (discard) useApp.setState({ dirty: false })
+        return discard
       })
     })()
 
-    return () => unlisten?.()
+    return () => {
+      window.removeEventListener('beforeunload', onBeforeUnload)
+      unlisten?.()
+    }
   }, [])
 
   return (
     <div className="app">
-      <TitleBar onOpen={() => void openViaDialog()} />
+      <TitleBar onOpen={openViaDialog} />
 
       {status === 'ready' ? (
         <>
@@ -300,7 +257,7 @@ export default function App() {
         <>
           <div />
           <div className="body">
-            <Welcome onOpen={() => void openViaDialog()} dragging={dragging} />
+            <Welcome onOpen={openViaDialog} dragging={dragging} />
           </div>
         </>
       )}
@@ -325,4 +282,75 @@ export default function App() {
       <Toasts />
     </div>
   )
+}
+
+/** Maps a browser keystroke onto the same command ids the native menu emits. */
+function webAccelerator(e: KeyboardEvent): string | null {
+  const key = e.key.toLowerCase()
+  if (key === 'o') return 'open'
+  if (key === 's') return e.shiftKey ? 'save-as' : 'save'
+  if (key === 'z') return e.shiftKey ? 'redo' : 'undo'
+  if (key === '=' || key === '+') return 'zoom-in'
+  if (key === '-') return 'zoom-out'
+  if (key === '0') return 'zoom-fit'
+  if (key === '1') return 'tool-signature'
+  if (key === '2') return 'tool-text'
+  if (key === '3') return 'tool-date'
+  if (key === '4') return 'tool-check'
+  return null
+}
+
+function runCommand(id: string) {
+  const s = useApp.getState()
+  switch (id) {
+    case 'open':
+      void s.openDialog()
+      break
+    case 'save':
+      if (s.status === 'ready') void s.save('save')
+      break
+    case 'save-as':
+      if (s.status === 'ready') void s.save('save-as')
+      break
+    case 'close-doc':
+      s.closeDocument()
+      break
+    case 'undo':
+      s.undo()
+      break
+    case 'redo':
+      s.redo()
+      break
+    case 'delete-selection':
+      if (s.selectedId) s.removeElement(s.selectedId)
+      break
+    case 'tool-signature':
+      triggerSign()
+      break
+    case 'tool-text':
+      s.setTool('text')
+      break
+    case 'tool-date':
+      s.setTool('date')
+      break
+    case 'tool-check':
+      s.armStamp(null)
+      s.setTool('check')
+      break
+    case 'manage-signatures':
+      s.setStudioOpen(true)
+      break
+    case 'zoom-in':
+      s.zoomBy(2)
+      break
+    case 'zoom-out':
+      s.zoomBy(0.5)
+      break
+    case 'zoom-fit':
+      s.setZoom(s.zoom, 'width')
+      break
+    case 'toggle-sidebar':
+      s.toggleSidebar()
+      break
+  }
 }

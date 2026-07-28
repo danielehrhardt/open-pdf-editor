@@ -55,7 +55,27 @@ const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" 
   </g>
 </svg>`
 
-const png = new Resvg(svg, { fitTo: { mode: 'width', value: 1024 } }).render().asPng()
+const render = (markup, size) =>
+  new Resvg(markup, { fitTo: { mode: 'width', value: size } }).render().asPng()
+
 await mkdir(path.join(root, 'assets'), { recursive: true })
-await writeFile(path.join(root, 'assets', 'icon.png'), png)
+await writeFile(path.join(root, 'assets', 'icon.png'), render(svg, 1024))
 console.log('wrote assets/icon.png (1024x1024)')
+
+// The webview build also needs the app copy React imports.
+await mkdir(path.join(root, 'src', 'assets'), { recursive: true })
+await writeFile(path.join(root, 'src', 'assets', 'icon.png'), render(svg, 512))
+
+// PWA icons. The maskable variant bleeds the background to the edges so
+// Android/Chrome can crop it to any shape without clipping the artwork.
+const maskable = svg
+  .replace(/<rect x="100" y="100" width="824" height="824" rx="185"/g, '<rect x="0" y="0" width="1024" height="1024" rx="0"')
+  .replace('transform="rotate(-5 512 512)"', 'transform="rotate(-5 512 512) scale(0.82) translate(112 112)"')
+
+const icons = path.join(root, 'public', 'icons')
+await mkdir(icons, { recursive: true })
+await writeFile(path.join(icons, 'icon-192.png'), render(svg, 192))
+await writeFile(path.join(icons, 'icon-512.png'), render(svg, 512))
+await writeFile(path.join(icons, 'icon-maskable-512.png'), render(maskable, 512))
+await writeFile(path.join(icons, 'apple-touch-icon.png'), render(svg, 180))
+console.log('wrote public/icons/* and src/assets/icon.png')

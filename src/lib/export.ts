@@ -298,12 +298,3 @@ function isolateExistingContent(doc: PDFDocument, page: ReturnType<PDFDocument['
     // Never let a hardening step block a save.
   }
 }
-
-/** Suggests "Contract.pdf" → "Contract (signed).pdf". */
-export function suggestSignedName(fileName: string): string {
-  const dot = fileName.lastIndexOf('.')
-  const stem = dot > 0 ? fileName.slice(0, dot) : fileName
-  const ext = dot > 0 ? fileName.slice(dot) : '.pdf'
-  if (/\(signed\)$/i.test(stem)) return fileName
-  return `${stem} (signed)${ext}`
-}

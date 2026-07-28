@@ -2,11 +2,17 @@
  *  and the editing history that ties them together. */
 import { create } from 'zustand'
 
-import { buildPdf, EncryptedPdfError, suggestSignedName } from '../lib/export'
+import { buildPdf, EncryptedPdfError } from '../lib/export'
 import { constrainToPage } from '../lib/geometry'
 import { measureBlock } from '../lib/text'
 import { loadPdf, PasswordRequiredError, type PDFDocumentProxy } from '../lib/pdf'
-import * as native from '../lib/native'
+import {
+  platform,
+  suggestSignedName,
+  type FileRef,
+  type OpenedFile,
+  type RecentEntry,
+} from '../platform'
 import type {
   FontKey,
   FormFieldInfo,
@@ -19,7 +25,6 @@ import type {
 } from '../types'
 
 const HISTORY_LIMIT = 80
-const RECENTS_KEY = 'inkwell.recents'
 const PREFS_KEY = 'inkwell.prefs'
 
 export type FormValue = string | boolean | string[]
@@ -39,12 +44,6 @@ export interface PendingStamp {
 interface Snapshot {
   elements: PdfElement[]
   formValues: Record<string, FormValue>
-}
-
-export interface RecentFile {
-  path: string
-  name: string
-  at: number
 }
 
 interface Prefs {
@@ -67,8 +66,10 @@ export interface AppState {
   status: 'empty' | 'loading' | 'ready'
   loadingLabel: string
 
-  path: string | null
+  /** Where the document came from, and where Save writes back to. */
+  ref: FileRef | null
   fileName: string
+  location: string
   writable: boolean
   source: Uint8Array | null
   doc: PDFDocumentProxy | null
@@ -95,17 +96,18 @@ export interface AppState {
   studioOpen: boolean
   prefs: Prefs
 
-  recents: RecentFile[]
+  recents: RecentEntry[]
   toasts: ToastItem[]
 
   // ---- document lifecycle
-  openPath: (path: string) => Promise<void>
-  openBytes: (
-    bytes: Uint8Array,
-    name: string,
-    path?: string | null,
+  openDialog: () => Promise<void>
+  openFile: (
+    file: OpenedFile,
     options?: { quiet?: boolean; preserveView?: boolean },
   ) => Promise<void>
+  openRecent: (entry: RecentEntry) => Promise<void>
+  refreshRecents: () => Promise<void>
+  dropRecent: (id: string) => Promise<void>
   closeDocument: () => void
   save: (mode: 'save' | 'save-as') => Promise<void>
 
@@ -133,59 +135,41 @@ export interface AppState {
   setPrefs: (patch: Partial<Prefs>) => void
   toast: (message: string, tone?: ToastItem['tone'], action?: ToastItem['action']) => void
   dismissToast: (id: string) => void
-  removeRecent: (path: string) => void
 }
 
 let counter = 0
 export const newElementId = () => `el_${Date.now().toString(36)}_${(counter++).toString(36)}`
 
-function readJson<T>(key: string, fallback: T): T {
+function readPrefs(): Prefs {
   try {
-    const raw = localStorage.getItem(key)
-    return raw ? { ...fallback, ...(JSON.parse(raw) as object) } as T : fallback
+    const raw = localStorage.getItem(PREFS_KEY)
+    return raw ? { ...DEFAULT_PREFS, ...(JSON.parse(raw) as Partial<Prefs>) } : DEFAULT_PREFS
   } catch {
-    return fallback
-  }
-}
-
-function readRecents(): RecentFile[] {
-  try {
-    const raw = localStorage.getItem(RECENTS_KEY)
-    const list = raw ? (JSON.parse(raw) as RecentFile[]) : []
-    return Array.isArray(list) ? list.slice(0, 8) : []
-  } catch {
-    return []
+    return DEFAULT_PREFS
   }
 }
 
 const ZOOM_STOPS = [0.25, 0.33, 0.5, 0.67, 0.8, 1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4]
 
 export const useApp = create<AppState>((set, get) => {
+  const initialPrefs = readPrefs()
+
   const snapshot = (): Snapshot => ({
     elements: get().elements.map((e) => ({ ...e })),
     formValues: { ...get().formValues },
   })
 
   const pushHistory = () => {
-    const past = [...get().past, snapshot()].slice(-HISTORY_LIMIT)
-    set({ past, future: [] })
-  }
-
-  const persistRecents = (recents: RecentFile[]) => {
-    set({ recents })
-    try {
-      localStorage.setItem(RECENTS_KEY, JSON.stringify(recents))
-    } catch {
-      /* storage full or disabled — recents are a convenience, not state we owe */
-    }
+    set({ past: [...get().past, snapshot()].slice(-HISTORY_LIMIT), future: [] })
   }
 
   return {
     status: 'empty',
     loadingLabel: '',
 
-    path: null,
+    ref: null,
     fileName: '',
+    location: '',
     writable: true,
     source: null,
     doc: null,
@@ -207,46 +191,36 @@ export const useApp = create<AppState>((set, get) => {
     zoom: 1,
     fitMode: 'width',
     currentPage: 0,
-    sidebar: readJson<Prefs>(PREFS_KEY, DEFAULT_PREFS).sidebar,
+    sidebar: initialPrefs.sidebar,
     studioOpen: false,
-    prefs: readJson<Prefs>(PREFS_KEY, DEFAULT_PREFS),
+    prefs: initialPrefs,
 
-    recents: readRecents(),
+    recents: [],
     toasts: [],
 
-    openPath: async (path) => {
-      set({ status: 'loading', loadingLabel: 'Opening…' })
+    openDialog: async () => {
       try {
-        const [bytes, meta] = await Promise.all([native.readFile(path), native.fileMeta(path)])
-        await get().openBytes(bytes, meta.name, path)
-        set({ writable: meta.writable })
-        if (!meta.writable) {
-          get().toast('This file is read-only — use Save As to keep your changes.', 'info')
-        }
-        const recents = [
-          { path, name: meta.name, at: Date.now() },
-          ...get().recents.filter((r) => r.path !== path),
-        ].slice(0, 8)
-        persistRecents(recents)
+        const file = await platform().openPdf()
+        if (file) await get().openFile(file)
       } catch (err) {
-        set({ status: get().doc ? 'ready' : 'empty', loadingLabel: '' })
         get().toast(describeError(err), 'error')
       }
     },
 
-    openBytes: async (bytes, name, path = null, options) => {
+    openFile: async (file, options) => {
       const keepView = options?.preserveView === true
       set({ status: 'loading', loadingLabel: 'Reading pages…' })
       try {
-        const loaded = await loadPdf(bytes)
+        const loaded = await loadPdf(file.bytes)
         get().doc?.destroy()
         set({
           status: 'ready',
           loadingLabel: '',
-          path,
-          fileName: name,
-          writable: true,
-          source: bytes,
+          ref: file.ref,
+          fileName: file.name,
+          location: file.location,
+          writable: file.writable,
+          source: file.bytes,
           doc: loaded.doc,
           pages: loaded.pages,
           fields: loaded.fields,
@@ -261,11 +235,17 @@ export const useApp = create<AppState>((set, get) => {
           pending: null,
           ...(keepView ? {} : { currentPage: 0 }),
         })
-        if (!options?.quiet && loaded.fields.length > 0) {
+        void get().refreshRecents()
+
+        if (options?.quiet) return
+        if (loaded.fields.length > 0) {
           get().toast(
             `${loaded.fields.length} form field${loaded.fields.length === 1 ? '' : 's'} detected — click one to fill it in.`,
             'info',
           )
+        }
+        if (!file.writable && platform().canSaveInPlace) {
+          get().toast('This file is read-only — use Save As to keep your changes.', 'info')
         }
       } catch (err) {
         set({ status: get().doc ? 'ready' : 'empty', loadingLabel: '' })
@@ -273,12 +253,38 @@ export const useApp = create<AppState>((set, get) => {
       }
     },
 
+    openRecent: async (entry) => {
+      try {
+        const file = await platform().openRecent(entry)
+        if (file) await get().openFile(file)
+      } catch (err) {
+        get().toast(describeError(err), 'error')
+        void get().refreshRecents()
+      }
+    },
+
+    refreshRecents: async () => {
+      try {
+        set({ recents: await platform().listRecents() })
+      } catch {
+        set({ recents: [] })
+      }
+    },
+
+    dropRecent: async (id) => {
+      await platform()
+        .removeRecent(id)
+        .catch(() => undefined)
+      void get().refreshRecents()
+    },
+
     closeDocument: () => {
       get().doc?.destroy()
       set({
         status: 'empty',
-        path: null,
+        ref: null,
         fileName: '',
+        location: '',
         source: null,
         doc: null,
         pages: [],
@@ -299,7 +305,6 @@ export const useApp = create<AppState>((set, get) => {
       const s = get()
       if (!s.source || s.saving) return
 
-      const needsDialog = mode === 'save-as' || !s.path || !s.writable
       set({ saving: true })
       try {
         const { bytes, warnings } = await buildPdf({
@@ -311,35 +316,53 @@ export const useApp = create<AppState>((set, get) => {
           flattenForm: s.prefs.flattenForm,
         })
 
-        let target = s.path
-        if (needsDialog) {
-          const suggested = s.path
-            ? s.path.replace(/[^/]+$/, suggestSignedName(s.fileName))
-            : suggestSignedName(s.fileName || 'Document.pdf')
-          target = await native.pickSaveTarget(suggested)
-          if (!target) {
-            set({ saving: false })
-            return
-          }
+        const result = await platform().save({
+          bytes,
+          ref: s.ref,
+          suggestedName:
+            mode === 'save-as' || !s.ref
+              ? suggestSignedName(s.fileName || 'Document.pdf')
+              : s.fileName,
+          forceNew: mode === 'save-as' || !s.writable,
+        })
+
+        if (!result) {
+          set({ saving: false })
+          return
         }
 
-        await native.writeFile(target!, bytes)
-
-        // Re-open what we just wrote. Without this the stamps stay in
-        // `elements` while `source` already contains them, so a second save
-        // would draw every signature twice.
-        const name = target!.split('/').pop() ?? s.fileName
-        await get().openBytes(bytes, name, target!, { quiet: true, preserveView: true })
-        set({ saving: false })
-        persistRecents(
-          [{ path: target!, name, at: Date.now() }, ...s.recents.filter((r) => r.path !== target)].slice(0, 8),
-        )
-
         for (const w of warnings) get().toast(w, 'info')
-        get().toast(`Saved ${name}`, 'success', {
-          label: 'Show in Finder',
-          run: () => void native.revealInFinder(target!),
-        })
+
+        if (result.persisted) {
+          // Re-open what we just wrote. Without this the stamps stay in
+          // `elements` while `source` already contains them, so a second save
+          // would draw every signature twice.
+          await get().openFile(
+            {
+              name: result.name,
+              bytes,
+              ref: result.ref,
+              writable: true,
+              location: result.location,
+            },
+            { quiet: true, preserveView: true },
+          )
+          set({ saving: false })
+
+          const target = result.ref
+          get().toast(
+            `Saved ${result.name}`,
+            'success',
+            platform().canReveal(target)
+              ? { label: 'Show in Finder', run: () => void platform().reveal(target!) }
+              : undefined,
+          )
+        } else {
+          // A download: the file left the app but there is no handle to write
+          // back to, so the working copy stays exactly as it is.
+          set({ saving: false, dirty: false })
+          get().toast(`Downloaded ${result.name}`, 'success')
+        }
       } catch (err) {
         set({ saving: false })
         get().toast(describeError(err), 'error')
@@ -453,10 +476,12 @@ export const useApp = create<AppState>((set, get) => {
       })),
 
     armStamp: (stamp) =>
-      set({ pending: stamp, tool: stamp ? (stamp.kind === 'image' ? 'image' : 'signature') : 'select' }),
+      set({
+        pending: stamp,
+        tool: stamp ? (stamp.kind === 'image' ? 'image' : 'signature') : 'select',
+      }),
 
-    setZoom: (zoom, fitMode = null) =>
-      set({ zoom: Math.min(6, Math.max(0.15, zoom)), fitMode }),
+    setZoom: (zoom, fitMode = null) => set({ zoom: Math.min(6, Math.max(0.15, zoom)), fitMode }),
 
     zoomBy: (factor) => {
       const current = get().zoom
@@ -464,7 +489,9 @@ export const useApp = create<AppState>((set, get) => {
         const next = ZOOM_STOPS.find((z) => z > current + 0.001) ?? Math.min(6, current * 1.25)
         set({ zoom: next, fitMode: null })
       } else {
-        const next = [...ZOOM_STOPS].reverse().find((z) => z < current - 0.001) ?? Math.max(0.15, current / 1.25)
+        const next =
+          [...ZOOM_STOPS].reverse().find((z) => z < current - 0.001) ??
+          Math.max(0.15, current / 1.25)
         set({ zoom: next, fitMode: null })
       }
     },
@@ -492,13 +519,10 @@ export const useApp = create<AppState>((set, get) => {
     toast: (message, tone = 'info', action) => {
       const id = `t_${Date.now()}_${counter++}`
       set((s) => ({ toasts: [...s.toasts.slice(-3), { id, message, tone, action }] }))
-      const ttl = tone === 'error' ? 7000 : 4200
-      setTimeout(() => get().dismissToast(id), ttl)
+      setTimeout(() => get().dismissToast(id), tone === 'error' ? 7000 : 4200)
     },
 
     dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
-
-    removeRecent: (path) => persistRecents(get().recents.filter((r) => r.path !== path)),
   }
 })
 

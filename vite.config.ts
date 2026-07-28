@@ -16,7 +16,7 @@ export default defineConfig({
     watch: { ignored: ['**/src-tauri/**'] },
   },
   build: {
-    target: 'safari15',
+    target: ['es2020', 'chrome87', 'edge88', 'firefox78', 'safari14'],
     sourcemap: false,
     chunkSizeWarningLimit: 2500,
   },

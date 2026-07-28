@@ -8,6 +8,11 @@ import { createElementForTool, PageView } from './PageView'
 
 const PAGE_GAP = 22
 const STACK_PADDING = 26
+/**
+ * Filling a very wide window would render a page at 300%+, which is unreadable
+ * rather than helpful. Cap the automatic fit; manual zoom still goes to 600%.
+ */
+const MAX_FIT_ZOOM = 2
 
 export function Viewer() {
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -49,7 +54,7 @@ export function Viewer() {
         fitMode === 'width'
           ? availableW / widest
           : Math.min(availableW / widest, availableH / tallest)
-      setZoom(Math.min(4, Math.max(0.15, next)), fitMode)
+      setZoom(Math.min(MAX_FIT_ZOOM, Math.max(0.15, next)), fitMode)
     }
 
     apply()

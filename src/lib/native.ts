@@ -6,7 +6,7 @@
  */
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
-import { open as openDialog, save as saveDialog, message } from '@tauri-apps/plugin-dialog'
+import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog'
 
 export const isTauri = (): boolean =>
   typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
@@ -46,7 +46,6 @@ export const pathExists = (path: string) => invoke<boolean>('path_exists', { pat
 export const loadLibraryRaw = () => invoke<string>('load_library')
 export const saveLibraryRaw = (json: string) => invoke<void>('save_library', { json })
 export const revealInFinder = (path: string) => invoke<void>('reveal', { path })
-export const openExternal = (path: string) => invoke<void>('open_external', { path })
 export const takePendingOpen = () => invoke<string[]>('take_pending_open')
 
 export async function pickPdf(): Promise<string | null> {
@@ -77,9 +76,6 @@ export async function pickSaveTarget(defaultPath: string): Promise<string | null
   })
   return picked ?? null
 }
-
-export const alert = (title: string, text: string) =>
-  message(text, { title, kind: 'error' })
 
 export function onMenu(handler: (id: string) => void): Promise<UnlistenFn> {
   return listen<string>('menu', (e) => handler(e.payload))

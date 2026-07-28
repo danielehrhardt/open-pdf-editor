@@ -14,7 +14,7 @@ import {
   toCanvas,
   trimTransparent,
 } from '../lib/image'
-import * as native from '../lib/native'
+import { platform } from '../platform'
 import { useApp } from '../state/store'
 import { useLibrary } from '../state/library'
 import type { SignatureEntry, SignatureSource } from '../types'
@@ -91,11 +91,9 @@ export function SignatureStudio() {
     ).then(() => setFontsReady(true))
   }, [open, fontsReady])
 
-  const loadImageFromPath = useCallback(
-    async (path: string) => {
+  const useImage = useCallback(
+    async (src: string) => {
       try {
-        const bytes = await native.readFile(path)
-        const src = bytesToDataUrl(bytes, guessMime(path))
         setImageSrc(src)
         // A photo or scan needs its white paper knocked out; a PNG that already
         // has transparency does not.
@@ -108,16 +106,25 @@ export function SignatureStudio() {
     [toast],
   )
 
+  const pickImage = useCallback(async () => {
+    try {
+      const picked = await platform().openImage()
+      if (picked) await useImage(bytesToDataUrl(picked.bytes, guessMime(picked.name)))
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Could not read that image.', 'error')
+    }
+  }, [toast, useImage])
+
   // Images dropped onto the window while the studio is open land here.
   useEffect(() => {
     if (!open) return
     const handler = (e: Event) => {
-      const path = (e as CustomEvent<string>).detail
-      if (path) void loadImageFromPath(path)
+      const src = (e as CustomEvent<string>).detail
+      if (src) void useImage(src)
     }
     window.addEventListener('inkwell:image', handler)
     return () => window.removeEventListener('inkwell:image', handler)
-  }, [open, loadImageFromPath])
+  }, [open, useImage])
 
   // Paste an image straight from the clipboard.
   useEffect(() => {
@@ -128,14 +135,11 @@ export function SignatureStudio() {
       const file = item.getAsFile()
       if (!file) return
       e.preventDefault()
-      const src = bytesToDataUrl(new Uint8Array(await file.arrayBuffer()), file.type)
-      setImageSrc(src)
-      setCleanBackground(!(await hasAlpha(src)))
-      setTab('upload')
+      await useImage(bytesToDataUrl(new Uint8Array(await file.arrayBuffer()), file.type))
     }
     window.addEventListener('paste', onPaste)
     return () => window.removeEventListener('paste', onPaste)
-  }, [open])
+  }, [open, useImage])
 
   // Recompute the cleaned-up import preview.
   useEffect(() => {
@@ -305,10 +309,7 @@ export function SignatureStudio() {
               setKeepColor={setKeepColor}
               cleanBackground={cleanBackground}
               setCleanBackground={setCleanBackground}
-              onPick={async () => {
-                const path = await native.pickImage()
-                if (path) await loadImageFromPath(path)
-              }}
+              onPick={pickImage}
               onClear={() => {
                 setImageSrc(null)
                 setPreview(null)
@@ -372,7 +373,7 @@ export function SignatureStudio() {
 
         <footer className="modal__foot">
           <span className="rail__hint" style={{ flex: 1 }}>
-            Saved signatures stay on this Mac and are ready next time.
+            {platform().storageNote}
           </span>
           <button type="button" className="btn" disabled={!canSave || busy} onClick={() => void commit(false)}>
             Save

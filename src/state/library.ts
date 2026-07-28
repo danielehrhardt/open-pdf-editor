@@ -1,10 +1,8 @@
 /** Persistent signature library, stored as JSON in the app's data directory. */
 import { create } from 'zustand'
 
-import { isTauri, loadLibraryRaw, saveLibraryRaw } from '../lib/native'
+import { platform } from '../platform'
 import type { SignatureEntry } from '../types'
-
-const FALLBACK_KEY = 'inkwell.signatures'
 
 interface LibraryState {
   entries: SignatureEntry[]
@@ -18,16 +16,6 @@ interface LibraryState {
 
 function newId(): string {
   return `sig_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
-}
-
-async function readRaw(): Promise<string> {
-  if (isTauri()) return loadLibraryRaw()
-  return localStorage.getItem(FALLBACK_KEY) ?? ''
-}
-
-async function writeRaw(json: string): Promise<void> {
-  if (isTauri()) return saveLibraryRaw(json)
-  localStorage.setItem(FALLBACK_KEY, json)
 }
 
 function parse(raw: string): SignatureEntry[] {
@@ -47,7 +35,7 @@ export const useLibrary = create<LibraryState>((set, get) => {
   const persist = async (entries: SignatureEntry[]) => {
     set({ entries })
     try {
-      await writeRaw(JSON.stringify({ version: 1, entries }, null, 2))
+      await platform().saveLibrary(JSON.stringify({ version: 1, entries }, null, 2))
     } catch (err) {
       console.error('Could not persist the signature library', err)
     }
@@ -60,7 +48,7 @@ export const useLibrary = create<LibraryState>((set, get) => {
     load: async () => {
       if (get().loaded) return
       try {
-        set({ entries: parse(await readRaw()), loaded: true })
+        set({ entries: parse(await platform().loadLibrary()), loaded: true })
       } catch {
         set({ entries: [], loaded: true })
       }

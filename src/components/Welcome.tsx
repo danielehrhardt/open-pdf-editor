@@ -1,12 +1,14 @@
 /** Empty state: open a document, or pick up where you left off. */
 import iconUrl from '../assets/icon.png'
+import { platform } from '../platform'
 import { useApp } from '../state/store'
 import { CloseIcon, DocIcon, FolderIcon } from './Icons'
 
 export function Welcome({ onOpen, dragging }: { onOpen: () => void; dragging: boolean }) {
   const recents = useApp((s) => s.recents)
-  const openPath = useApp((s) => s.openPath)
-  const removeRecent = useApp((s) => s.removeRecent)
+  const openRecent = useApp((s) => s.openRecent)
+  const dropRecent = useApp((s) => s.dropRecent)
+  const host = platform()
 
   return (
     <div className="welcome">
@@ -15,8 +17,7 @@ export function Welcome({ onOpen, dragging }: { onOpen: () => void; dragging: bo
         <div style={{ display: 'grid', gap: 8, justifyItems: 'center' }}>
           <h1>Sign and fill out PDFs</h1>
           <p>
-            Open a document, drop in your signature, fill the blanks, and save. Everything stays on
-            this Mac.
+            Open a document, drop in your signature, fill the blanks, and save. {host.storageNote}
           </p>
         </div>
 
@@ -31,27 +32,27 @@ export function Welcome({ onOpen, dragging }: { onOpen: () => void; dragging: bo
           </button>
         </div>
 
-        {recents.length > 0 && (
+        {host.hasRecents && recents.length > 0 && (
           <div className="recents">
             <div className="section-title">Recent</div>
             {recents.map((file) => (
-              <div key={file.path} className="recent">
+              <div key={file.id} className="recent">
                 <DocIcon size={15} />
                 <button
                   type="button"
                   className="recent__name"
                   style={{ textAlign: 'left' }}
-                  onClick={() => void openPath(file.path)}
-                  title={file.path}
+                  onClick={() => void openRecent(file)}
+                  title={file.location ? `${file.location}/${file.name}` : file.name}
                 >
                   {file.name}
                 </button>
-                <span className="recent__path">{file.path}</span>
+                {file.location && <span className="recent__path">{file.location}</span>}
                 <button
                   type="button"
                   className="recent__remove"
                   title="Remove from list"
-                  onClick={() => removeRecent(file.path)}
+                  onClick={() => void dropRecent(file.id)}
                 >
                   <CloseIcon size={12} />
                 </button>
