@@ -1,0 +1,65 @@
+/** Empty state: open a document, or pick up where you left off. */
+import iconUrl from '../assets/icon.png'
+import { useApp } from '../state/store'
+import { CloseIcon, DocIcon, FolderIcon } from './Icons'
+
+export function Welcome({ onOpen, dragging }: { onOpen: () => void; dragging: boolean }) {
+  const recents = useApp((s) => s.recents)
+  const openPath = useApp((s) => s.openPath)
+  const removeRecent = useApp((s) => s.removeRecent)
+
+  return (
+    <div className="welcome">
+      <div className="welcome__inner">
+        <img className="welcome__mark" src={iconUrl} alt="" width={76} height={76} />
+        <div style={{ display: 'grid', gap: 8, justifyItems: 'center' }}>
+          <h1>Sign and fill out PDFs</h1>
+          <p>
+            Open a document, drop in your signature, fill the blanks, and save. Everything stays on
+            this Mac.
+          </p>
+        </div>
+
+        <div className="dropzone" data-over={dragging}>
+          <DocIcon size={30} />
+          <div style={{ fontSize: 13.5, fontWeight: 500 }}>
+            {dragging ? 'Drop it anywhere' : 'Drag a PDF here'}
+          </div>
+          <button type="button" className="btn btn--primary btn--lg" onClick={onOpen}>
+            <FolderIcon size={15} />
+            Choose a PDF…
+          </button>
+        </div>
+
+        {recents.length > 0 && (
+          <div className="recents">
+            <div className="section-title">Recent</div>
+            {recents.map((file) => (
+              <div key={file.path} className="recent">
+                <DocIcon size={15} />
+                <button
+                  type="button"
+                  className="recent__name"
+                  style={{ textAlign: 'left' }}
+                  onClick={() => void openPath(file.path)}
+                  title={file.path}
+                >
+                  {file.name}
+                </button>
+                <span className="recent__path">{file.path}</span>
+                <button
+                  type="button"
+                  className="recent__remove"
+                  title="Remove from list"
+                  onClick={() => removeRecent(file.path)}
+                >
+                  <CloseIcon size={12} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}

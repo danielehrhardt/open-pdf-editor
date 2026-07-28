@@ -4,13 +4,12 @@ import { useEffect, useLayoutEffect, useRef } from 'react'
 import { beginDrag } from '../lib/drag'
 import { cssFont, lineHeightFor, measureBlock } from '../lib/text'
 import { useApp } from '../state/store'
-import type { ImageElement, PageGeometry, PdfElement, TextElement } from '../types'
+import type { ImageElement, PdfElement, TextElement } from '../types'
 
 const MIN_SIZE = 8
 
 interface Props {
   element: PdfElement
-  page: PageGeometry
   zoom: number
   selected: boolean
   editing: boolean
@@ -18,7 +17,7 @@ interface Props {
 
 type Corner = 'nw' | 'ne' | 'sw' | 'se'
 
-export function ElementBox({ element, page, zoom, selected, editing }: Props) {
+export function ElementBox({ element, zoom, selected, editing }: Props) {
   const select = useApp((s) => s.select)
   const setEditing = useApp((s) => s.setEditing)
   const updateElement = useApp((s) => s.updateElement)
@@ -163,11 +162,6 @@ export function ElementBox({ element, page, zoom, selected, editing }: Props) {
           <Handle corner="se" onDown={startResize} />
         </>
       )}
-
-      {/* Keeps elements from being dragged off-page unnoticed. */}
-      <span hidden aria-hidden="true">
-        {page.pageNumber}
-      </span>
     </div>
   )
 }

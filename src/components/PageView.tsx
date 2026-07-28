@@ -103,7 +103,6 @@ export function PageView({ index, page, zoom, active, fields, elements, onPlace 
         <ElementBox
           key={el.id}
           element={el}
-          page={page}
           zoom={zoom}
           selected={el.id === selectedId}
           editing={el.id === editingId}
