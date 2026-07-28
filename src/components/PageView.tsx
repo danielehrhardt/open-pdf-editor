@@ -78,6 +78,10 @@ export function PageView({ index, page, zoom, active, fields, elements, onPlace 
       }
       return
     }
+    // A placement click is not a selection gesture: without this the browser's
+    // own mousedown default moves focus to the page, which would blur a text
+    // editor we are about to open on this very click.
+    e.preventDefault()
     const rect = e.currentTarget.getBoundingClientRect()
     onPlace(index, (e.clientX - rect.left) / zoom, (e.clientY - rect.top) / zoom)
   }

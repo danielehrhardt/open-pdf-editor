@@ -188,13 +188,19 @@ textarea {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 0 12px 0 84px;
+  padding: 0 12px;
   background: var(--chrome);
   backdrop-filter: saturate(180%) blur(24px);
   -webkit-backdrop-filter: saturate(180%) blur(24px);
   border-bottom: 1px solid var(--line-soft);
   position: relative;
   z-index: 30;
+}
+
+/* The desktop window overlays its traffic lights on the title bar; the browser
+   has no window controls to clear, so the title starts at the edge there. */
+:root[data-host='tauri'] .titlebar {
+  padding-left: 84px;
 }
 
 .titlebar__drag {
@@ -432,6 +438,8 @@ textarea {
 
 /* ------------------------------------------------------------------ body --- */
 
+/* Columns are pinned by name rather than left to auto-placement: hiding the
+   thumbnails must not slide the viewer and rail one column to the left. */
 .body {
   display: grid;
   grid-template-columns: auto 1fr auto;
@@ -442,6 +450,7 @@ textarea {
 /* ------------------------------------------------------------ thumbnails --- */
 
 .thumbs {
+  grid-column: 1;
   width: 176px;
   border-right: 1px solid var(--line);
   background: var(--panel);
@@ -518,6 +527,7 @@ textarea {
 /* ---------------------------------------------------------------- canvas --- */
 
 .viewer {
+  grid-column: 2;
   position: relative;
   overflow: auto;
   background: var(--bg-deep);
@@ -768,6 +778,7 @@ textarea {
 /* ------------------------------------------------------------------ rail --- */
 
 .rail {
+  grid-column: 3;
   width: 272px;
   border-left: 1px solid var(--line);
   background: var(--panel);

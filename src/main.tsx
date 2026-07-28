@@ -20,7 +20,11 @@ if (!container) throw new Error('Missing #root')
 // Nothing renders until we know which host we are on — every file operation
 // goes through the platform, and components read it synchronously. Kept as a
 // promise chain rather than top-level await, which needs Safari 15.
-void initPlatform().then(() => {
+void initPlatform().then((host) => {
+  // Lets the stylesheet reserve room for the desktop window controls without
+  // leaving a gap in the browser, which has none.
+  document.documentElement.dataset.host = host.id
+
   createRoot(container).render(
     <StrictMode>
       <App />
