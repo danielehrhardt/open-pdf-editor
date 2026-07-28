@@ -1,0 +1,520 @@
+/** The application store: one open document, its overlay elements, form values
+ *  and the editing history that ties them together. */
+import { create } from 'zustand'
+
+import { buildPdf, EncryptedPdfError, suggestSignedName } from '../lib/export'
+import { constrainToPage } from '../lib/geometry'
+import { measureBlock } from '../lib/text'
+import { loadPdf, PasswordRequiredError, type PDFDocumentProxy } from '../lib/pdf'
+import * as native from '../lib/native'
+import type {
+  FontKey,
+  FormFieldInfo,
+  ImageElement,
+  PageGeometry,
+  PdfElement,
+  TextElement,
+  ToastItem,
+  ToolId,
+} from '../types'
+
+const HISTORY_LIMIT = 80
+const RECENTS_KEY = 'inkwell.recents'
+const PREFS_KEY = 'inkwell.prefs'
+
+export type FormValue = string | boolean | string[]
+
+/** An image waiting to be dropped onto the page by the next click. */
+export interface PendingStamp {
+  src: string
+  aspect: number
+  kind: 'signature' | 'image'
+  /** Signature library entry it came from, for highlighting. */
+  sourceId?: string
+  /** Placement width in PDF points. */
+  width: number
+  label: string
+}
+
+interface Snapshot {
+  elements: PdfElement[]
+  formValues: Record<string, FormValue>
+}
+
+export interface RecentFile {
+  path: string
+  name: string
+  at: number
+}
+
+interface Prefs {
+  flattenForm: boolean
+  sidebar: boolean
+  textFont: FontKey
+  textSize: number
+  textColor: string
+}
+
+const DEFAULT_PREFS: Prefs = {
+  flattenForm: true,
+  sidebar: true,
+  textFont: 'helvetica',
+  textSize: 12,
+  textColor: '#111827',
+}
+
+export interface AppState {
+  status: 'empty' | 'loading' | 'ready'
+  loadingLabel: string
+
+  path: string | null
+  fileName: string
+  writable: boolean
+  source: Uint8Array | null
+  doc: PDFDocumentProxy | null
+  pages: PageGeometry[]
+  fields: FormFieldInfo[]
+  formValues: Record<string, FormValue>
+  elements: PdfElement[]
+
+  selectedId: string | null
+  editingId: string | null
+  dirty: boolean
+  saving: boolean
+
+  past: Snapshot[]
+  future: Snapshot[]
+
+  tool: ToolId
+  /** Stamp armed for the next click on a page. */
+  pending: PendingStamp | null
+  zoom: number
+  fitMode: 'width' | 'page' | null
+  currentPage: number
+  sidebar: boolean
+  studioOpen: boolean
+  prefs: Prefs
+
+  recents: RecentFile[]
+  toasts: ToastItem[]
+
+  // ---- document lifecycle
+  openPath: (path: string) => Promise<void>
+  openBytes: (bytes: Uint8Array, name: string, path?: string | null) => Promise<void>
+  closeDocument: () => void
+  save: (mode: 'save' | 'save-as') => Promise<void>
+
+  // ---- editing
+  addElement: (el: PdfElement) => void
+  updateElement: (id: string, patch: Partial<PdfElement>, options?: { history?: boolean }) => void
+  removeElement: (id: string) => void
+  duplicateElement: (id: string) => void
+  select: (id: string | null) => void
+  setEditing: (id: string | null) => void
+  nudge: (dx: number, dy: number) => void
+  setFormValue: (name: string, value: FormValue) => void
+  beginChange: () => void
+  undo: () => void
+  redo: () => void
+
+  // ---- ui
+  setTool: (tool: ToolId) => void
+  armStamp: (stamp: PendingStamp | null) => void
+  setZoom: (zoom: number, fitMode?: 'width' | 'page' | null) => void
+  zoomBy: (factor: number) => void
+  setCurrentPage: (page: number) => void
+  toggleSidebar: () => void
+  setStudioOpen: (open: boolean) => void
+  setPrefs: (patch: Partial<Prefs>) => void
+  toast: (message: string, tone?: ToastItem['tone'], action?: ToastItem['action']) => void
+  dismissToast: (id: string) => void
+  removeRecent: (path: string) => void
+}
+
+let counter = 0
+export const newElementId = () => `el_${Date.now().toString(36)}_${(counter++).toString(36)}`
+
+function readJson<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key)
+    return raw ? { ...fallback, ...(JSON.parse(raw) as object) } as T : fallback
+  } catch {
+    return fallback
+  }
+}
+
+function readRecents(): RecentFile[] {
+  try {
+    const raw = localStorage.getItem(RECENTS_KEY)
+    const list = raw ? (JSON.parse(raw) as RecentFile[]) : []
+    return Array.isArray(list) ? list.slice(0, 8) : []
+  } catch {
+    return []
+  }
+}
+
+const ZOOM_STOPS = [0.25, 0.33, 0.5, 0.67, 0.8, 1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4]
+
+export const useApp = create<AppState>((set, get) => {
+  const snapshot = (): Snapshot => ({
+    elements: get().elements.map((e) => ({ ...e })),
+    formValues: { ...get().formValues },
+  })
+
+  const pushHistory = () => {
+    const past = [...get().past, snapshot()].slice(-HISTORY_LIMIT)
+    set({ past, future: [] })
+  }
+
+  const persistRecents = (recents: RecentFile[]) => {
+    set({ recents })
+    try {
+      localStorage.setItem(RECENTS_KEY, JSON.stringify(recents))
+    } catch {
+      /* storage full or disabled — recents are a convenience, not state we owe */
+    }
+  }
+
+  return {
+    status: 'empty',
+    loadingLabel: '',
+
+    path: null,
+    fileName: '',
+    writable: true,
+    source: null,
+    doc: null,
+    pages: [],
+    fields: [],
+    formValues: {},
+    elements: [],
+
+    selectedId: null,
+    editingId: null,
+    dirty: false,
+    saving: false,
+
+    past: [],
+    future: [],
+
+    tool: 'select',
+    pending: null,
+    zoom: 1,
+    fitMode: 'width',
+    currentPage: 0,
+    sidebar: readJson<Prefs>(PREFS_KEY, DEFAULT_PREFS).sidebar,
+    studioOpen: false,
+    prefs: readJson<Prefs>(PREFS_KEY, DEFAULT_PREFS),
+
+    recents: readRecents(),
+    toasts: [],
+
+    openPath: async (path) => {
+      set({ status: 'loading', loadingLabel: 'Opening…' })
+      try {
+        const [bytes, meta] = await Promise.all([native.readFile(path), native.fileMeta(path)])
+        await get().openBytes(bytes, meta.name, path)
+        set({ writable: meta.writable })
+        if (!meta.writable) {
+          get().toast('This file is read-only — use Save As to keep your changes.', 'info')
+        }
+        const recents = [
+          { path, name: meta.name, at: Date.now() },
+          ...get().recents.filter((r) => r.path !== path),
+        ].slice(0, 8)
+        persistRecents(recents)
+      } catch (err) {
+        set({ status: get().doc ? 'ready' : 'empty', loadingLabel: '' })
+        get().toast(describeError(err), 'error')
+      }
+    },
+
+    openBytes: async (bytes, name, path = null) => {
+      set({ status: 'loading', loadingLabel: 'Reading pages…' })
+      try {
+        const loaded = await loadPdf(bytes)
+        get().doc?.destroy()
+        set({
+          status: 'ready',
+          loadingLabel: '',
+          path,
+          fileName: name,
+          writable: true,
+          source: bytes,
+          doc: loaded.doc,
+          pages: loaded.pages,
+          fields: loaded.fields,
+          formValues: loaded.initialValues,
+          elements: [],
+          selectedId: null,
+          editingId: null,
+          dirty: false,
+          past: [],
+          future: [],
+          currentPage: 0,
+          tool: 'select',
+          pending: null,
+        })
+        if (loaded.fields.length > 0) {
+          get().toast(
+            `${loaded.fields.length} form field${loaded.fields.length === 1 ? '' : 's'} detected — click one to fill it in.`,
+            'info',
+          )
+        }
+      } catch (err) {
+        set({ status: get().doc ? 'ready' : 'empty', loadingLabel: '' })
+        get().toast(describeError(err), 'error')
+      }
+    },
+
+    closeDocument: () => {
+      get().doc?.destroy()
+      set({
+        status: 'empty',
+        path: null,
+        fileName: '',
+        source: null,
+        doc: null,
+        pages: [],
+        fields: [],
+        formValues: {},
+        elements: [],
+        selectedId: null,
+        editingId: null,
+        dirty: false,
+        past: [],
+        future: [],
+        tool: 'select',
+        pending: null,
+      })
+    },
+
+    save: async (mode) => {
+      const s = get()
+      if (!s.source || s.saving) return
+
+      const needsDialog = mode === 'save-as' || !s.path || !s.writable
+      set({ saving: true })
+      try {
+        const { bytes, warnings } = await buildPdf({
+          source: s.source,
+          pages: s.pages,
+          elements: s.elements,
+          fields: s.fields,
+          formValues: s.formValues,
+          flattenForm: s.prefs.flattenForm,
+        })
+
+        let target = s.path
+        if (needsDialog) {
+          const suggested = s.path
+            ? s.path.replace(/[^/]+$/, suggestSignedName(s.fileName))
+            : suggestSignedName(s.fileName || 'Document.pdf')
+          target = await native.pickSaveTarget(suggested)
+          if (!target) {
+            set({ saving: false })
+            return
+          }
+        }
+
+        await native.writeFile(target!, bytes)
+
+        // The saved file is the new baseline: re-open it so further edits stack
+        // on top of what is actually on disk instead of the original bytes.
+        const name = target!.split('/').pop() ?? s.fileName
+        set({
+          source: bytes,
+          path: target!,
+          fileName: name,
+          writable: true,
+          dirty: false,
+          saving: false,
+        })
+        persistRecents(
+          [{ path: target!, name, at: Date.now() }, ...s.recents.filter((r) => r.path !== target)].slice(0, 8),
+        )
+
+        for (const w of warnings) get().toast(w, 'info')
+        get().toast(`Saved ${name}`, 'success', {
+          label: 'Show in Finder',
+          run: () => void native.revealInFinder(target!),
+        })
+      } catch (err) {
+        set({ saving: false })
+        get().toast(describeError(err), 'error')
+      }
+    },
+
+    addElement: (el) => {
+      pushHistory()
+      set((s) => ({
+        elements: [...s.elements, el],
+        selectedId: el.id,
+        dirty: true,
+        pending: null,
+        tool: 'select',
+      }))
+    },
+
+    updateElement: (id, patch, options) => {
+      if (options?.history !== false) pushHistory()
+      set((s) => ({
+        elements: s.elements.map((el) => {
+          if (el.id !== id) return el
+          const next = { ...el, ...patch } as PdfElement
+          if (next.kind === 'text') {
+            const t = next as TextElement
+            const size = measureBlock(t.font, t.fontSize, t.text, t.letterSpacing)
+            t.w = size.w
+            t.h = size.h
+          }
+          const page = s.pages[next.page]
+          if (page) {
+            const fixed = constrainToPage(next, page.viewWidth, page.viewHeight)
+            next.x = fixed.x
+            next.y = fixed.y
+          }
+          return next
+        }),
+        dirty: true,
+      }))
+    },
+
+    removeElement: (id) => {
+      pushHistory()
+      set((s) => ({
+        elements: s.elements.filter((el) => el.id !== id),
+        selectedId: s.selectedId === id ? null : s.selectedId,
+        editingId: s.editingId === id ? null : s.editingId,
+        dirty: true,
+      }))
+    },
+
+    duplicateElement: (id) => {
+      const source = get().elements.find((el) => el.id === id)
+      if (!source) return
+      pushHistory()
+      const copy = { ...source, id: newElementId(), x: source.x + 16, y: source.y + 16 }
+      set((s) => ({ elements: [...s.elements, copy], selectedId: copy.id, dirty: true }))
+    },
+
+    select: (id) => set((s) => ({ selectedId: id, editingId: id === null ? null : s.editingId })),
+    setEditing: (id) => set({ editingId: id, selectedId: id ?? get().selectedId }),
+
+    nudge: (dx, dy) => {
+      const { selectedId, elements } = get()
+      const el = elements.find((e) => e.id === selectedId)
+      if (!el) return
+      get().updateElement(el.id, { x: el.x + dx, y: el.y + dy })
+    },
+
+    setFormValue: (name, value) => {
+      pushHistory()
+      set((s) => ({ formValues: { ...s.formValues, [name]: value }, dirty: true }))
+    },
+
+    beginChange: pushHistory,
+
+    undo: () => {
+      const { past, future } = get()
+      if (past.length === 0) return
+      const previous = past[past.length - 1]
+      set({
+        past: past.slice(0, -1),
+        future: [...future, snapshot()].slice(-HISTORY_LIMIT),
+        elements: previous.elements,
+        formValues: previous.formValues,
+        dirty: true,
+        editingId: null,
+      })
+    },
+
+    redo: () => {
+      const { past, future } = get()
+      if (future.length === 0) return
+      const next = future[future.length - 1]
+      set({
+        future: future.slice(0, -1),
+        past: [...past, snapshot()].slice(-HISTORY_LIMIT),
+        elements: next.elements,
+        formValues: next.formValues,
+        dirty: true,
+        editingId: null,
+      })
+    },
+
+    setTool: (tool) =>
+      set((s) => ({
+        tool,
+        pending: tool === 'signature' || tool === 'image' ? s.pending : null,
+        selectedId: tool === 'select' ? s.selectedId : null,
+        editingId: null,
+      })),
+
+    armStamp: (stamp) =>
+      set({ pending: stamp, tool: stamp ? (stamp.kind === 'image' ? 'image' : 'signature') : 'select' }),
+
+    setZoom: (zoom, fitMode = null) =>
+      set({ zoom: Math.min(6, Math.max(0.15, zoom)), fitMode }),
+
+    zoomBy: (factor) => {
+      const current = get().zoom
+      if (factor > 1) {
+        const next = ZOOM_STOPS.find((z) => z > current + 0.001) ?? Math.min(6, current * 1.25)
+        set({ zoom: next, fitMode: null })
+      } else {
+        const next = [...ZOOM_STOPS].reverse().find((z) => z < current - 0.001) ?? Math.max(0.15, current / 1.25)
+        set({ zoom: next, fitMode: null })
+      }
+    },
+
+    setCurrentPage: (page) => set({ currentPage: page }),
+
+    toggleSidebar: () => {
+      const sidebar = !get().sidebar
+      set({ sidebar })
+      get().setPrefs({ sidebar })
+    },
+
+    setStudioOpen: (studioOpen) => set({ studioOpen }),
+
+    setPrefs: (patch) => {
+      const prefs = { ...get().prefs, ...patch }
+      set({ prefs })
+      try {
+        localStorage.setItem(PREFS_KEY, JSON.stringify(prefs))
+      } catch {
+        /* non-critical */
+      }
+    },
+
+    toast: (message, tone = 'info', action) => {
+      const id = `t_${Date.now()}_${counter++}`
+      set((s) => ({ toasts: [...s.toasts.slice(-3), { id, message, tone, action }] }))
+      const ttl = tone === 'error' ? 7000 : 4200
+      setTimeout(() => get().dismissToast(id), ttl)
+    },
+
+    dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
+
+    removeRecent: (path) => persistRecents(get().recents.filter((r) => r.path !== path)),
+  }
+})
+
+function describeError(err: unknown): string {
+  if (err instanceof PasswordRequiredError) {
+    return 'That PDF is password protected. Remove the password and try again.'
+  }
+  if (err instanceof EncryptedPdfError) {
+    return 'This PDF is encrypted, so Inkwell cannot write changes back into it.'
+  }
+  if (err instanceof Error && err.message) return err.message
+  return typeof err === 'string' ? err : 'Something went wrong.'
+}
+
+/** Convenience selector for the element the user currently has selected. */
+export function useSelectedElement(): PdfElement | null {
+  return useApp((s) => s.elements.find((e) => e.id === s.selectedId) ?? null)
+}
+
+export type { ImageElement, TextElement }

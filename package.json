@@ -1,0 +1,42 @@
+{
+  "name": "inkwell",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Inkwell — fill out and sign PDFs on macOS",
+  "scripts": {
+    "sync-pdfjs": "node scripts/sync-pdfjs-assets.mjs",
+    "dev": "npm run sync-pdfjs && vite",
+    "build": "npm run sync-pdfjs && tsc -b && vite build",
+    "typecheck": "tsc -b",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "app:dev": "tauri dev",
+    "app:build": "tauri build",
+    "icons": "node scripts/make-icon.mjs && tauri icon assets/icon.png"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-dialog": "^2.7.2",
+    "@tauri-apps/plugin-opener": "^2.5.4",
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "5.7.284",
+    "perfect-freehand": "^1.2.3",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "zustand": "^5.0.8"
+  },
+  "devDependencies": {
+    "@resvg/resvg-js": "^2.6.2",
+    "@tauri-apps/cli": "^2.11.4",
+    "@types/node": "^26.1.2",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.2.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.6"
+  },
+  "allowScripts": {
+    "esbuild@0.28.1": true
+  }
+}
