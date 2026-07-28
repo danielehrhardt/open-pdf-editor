@@ -22,6 +22,7 @@ export function Viewer() {
   const prefs = useApp((s) => s.prefs)
   const addElement = useApp((s) => s.addElement)
   const setEditing = useApp((s) => s.setEditing)
+  const setTool = useApp((s) => s.setTool)
   const setCurrentPage = useApp((s) => s.setCurrentPage)
 
   const [visible, setVisible] = useState<Set<number>>(() => new Set([0, 1]))
@@ -157,8 +158,11 @@ export function Viewer() {
 
       addElement(element)
       if (tool === 'text') setEditing(element.id)
+      // Ticking boxes usually means ticking several, so that one tool stays
+      // armed; everything else drops back to Select after a single placement.
+      if (tool === 'check') setTool('check')
     },
-    [pages, pending, tool, prefs, addElement, setEditing],
+    [pages, pending, tool, prefs, addElement, setEditing, setTool],
   )
 
   const placing = tool !== 'select' && (tool !== 'signature' || Boolean(pending))

@@ -95,8 +95,11 @@ export function SignatureStudio() {
     async (path: string) => {
       try {
         const bytes = await native.readFile(path)
-        setImageSrc(bytesToDataUrl(bytes, guessMime(path)))
-        setCleanBackground(!(await hasAlpha(bytesToDataUrl(bytes, guessMime(path)))))
+        const src = bytesToDataUrl(bytes, guessMime(path))
+        setImageSrc(src)
+        // A photo or scan needs its white paper knocked out; a PNG that already
+        // has transparency does not.
+        setCleanBackground(!(await hasAlpha(src)))
         setTab('upload')
       } catch (err) {
         toast(err instanceof Error ? err.message : 'Could not read that image.', 'error')
@@ -403,6 +406,7 @@ function DrawPad({
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const currentRef = useRef<Point[]>([])
+  const [drawing, setDrawing] = useState(false)
 
   const repaint = useCallback(() => {
     const canvas = canvasRef.current
@@ -444,6 +448,7 @@ function DrawPad({
     ]
 
     currentRef.current = [at(e.clientX, e.clientY, e.pressure)]
+    setDrawing(true)
     repaint()
 
     beginDrag(e, {
@@ -454,6 +459,7 @@ function DrawPad({
       onEnd: () => {
         const finished = currentRef.current
         currentRef.current = []
+        setDrawing(false)
         if (finished.length > 1) setStrokes((prev) => [...prev, finished])
         else repaint()
       },
@@ -466,7 +472,7 @@ function DrawPad({
         <canvas ref={canvasRef} onPointerDown={start} />
         <div className="pad__baseline" />
         <span className="pad__x">×</span>
-        {strokes.length === 0 && currentRef.current.length === 0 && (
+        {strokes.length === 0 && !drawing && (
           <div className="pad__hint">Draw your signature above the line</div>
         )}
       </div>

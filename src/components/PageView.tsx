@@ -86,6 +86,7 @@ export function PageView({ index, page, zoom, active, fields, elements, onPlace 
     <div
       className="page"
       data-page={index}
+      data-placing={placing}
       style={{ width, height }}
       onPointerDown={handlePointerDown}
     >

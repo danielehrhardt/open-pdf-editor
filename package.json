@@ -9,6 +9,7 @@
     "dev": "npm run sync-pdfjs && vite",
     "build": "npm run sync-pdfjs && tsc -b && vite build",
     "typecheck": "tsc -b",
+    "test": "node scripts/verify-geometry.mjs && node scripts/verify-export.mjs && node scripts/verify-forms.mjs",
     "preview": "vite preview",
     "tauri": "tauri",
     "app:dev": "tauri dev",

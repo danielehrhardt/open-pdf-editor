@@ -592,6 +592,12 @@ textarea {
 .el--interactive {
   cursor: move;
 }
+/* While a stamp is armed, a click must place it — not grab whatever is under
+   the cursor. */
+.page[data-placing='true'] .el,
+.page[data-placing='true'] .elbar {
+  pointer-events: none;
+}
 .el:hover {
   box-shadow: 0 0 0 1px var(--accent-ring);
 }

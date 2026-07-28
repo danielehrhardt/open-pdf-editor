@@ -67,11 +67,16 @@ export const useLibrary = create<LibraryState>((set, get) => {
     },
 
     add: async (input) => {
-      const entry: SignatureEntry = { ...input, id: newId(), createdAt: Date.now() }
-      const entries = [entry, ...get().entries]
+      const existing = get().entries
       // The first signature of its kind becomes the default for one-click signing.
-      if (!entries.some((e) => e.favorite && e.kind === entry.kind)) entry.favorite = true
-      await persist(entries)
+      const isFirstOfKind = !existing.some((e) => e.favorite && e.kind === input.kind)
+      const entry: SignatureEntry = {
+        ...input,
+        id: newId(),
+        createdAt: Date.now(),
+        favorite: isFirstOfKind,
+      }
+      await persist([entry, ...existing])
       return entry
     },
 

@@ -1,6 +1,8 @@
 /** Application shell: wiring between the OS (menus, file drops) and the UI. */
 import { useCallback, useEffect, useState } from 'react'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
+import { getCurrentWindow } from '@tauri-apps/api/window'
+import { confirm } from '@tauri-apps/plugin-dialog'
 
 import { crossStamp } from './lib/stamps'
 import * as native from './lib/native'
@@ -17,6 +19,13 @@ import { Welcome } from './components/Welcome'
 import { DocIcon } from './components/Icons'
 
 const IMAGE_EXTENSIONS = /\.(png|jpe?g|webp|gif|bmp|heic|tiff?)$/i
+
+/**
+ * Signing needs the library, so route it through the toolbar button that owns
+ * the "use my default signature, otherwise open the studio" decision.
+ */
+const triggerSign = () =>
+  document.querySelector<HTMLButtonElement>('[data-action="sign"]')?.click()
 
 export default function App() {
   const status = useApp((s) => s.status)
@@ -125,7 +134,7 @@ export default function App() {
             if (s.selectedId) s.removeElement(s.selectedId)
             break
           case 'tool-signature':
-            document.querySelector<HTMLButtonElement>('[title^="Place a signature"]')?.click()
+            triggerSign()
             break
           case 'tool-text':
             s.setTool('text')
@@ -206,7 +215,7 @@ export default function App() {
           s.setTool('select')
           break
         case 's':
-          document.querySelector<HTMLButtonElement>('[title^="Place a signature"]')?.click()
+          triggerSign()
           break
         case 't':
           s.setTool('text')
@@ -236,19 +245,42 @@ export default function App() {
 
   // Reflect the open document in the window title.
   useEffect(() => {
-    const unsubscribe = useApp.subscribe((s) => {
-      document.title = s.status === 'ready' ? `${s.dirty ? '• ' : ''}${s.fileName}` : 'Inkwell'
-    })
-    return unsubscribe
+    let last = ''
+    const apply = (s: ReturnType<typeof useApp.getState>) => {
+      const title = s.status === 'ready' ? `${s.dirty ? '• ' : ''}${s.fileName}` : 'Inkwell'
+      if (title === last) return
+      last = title
+      document.title = title
+      if (native.isTauri()) void getCurrentWindow().setTitle(title).catch(() => {})
+    }
+    apply(useApp.getState())
+    return useApp.subscribe(apply)
   }, [])
 
-  // Guard against losing work when the window is closed.
+  // Never let unsaved marks disappear with the window.
   useEffect(() => {
-    const onBeforeUnload = (e: BeforeUnloadEvent) => {
-      if (useApp.getState().dirty) e.preventDefault()
-    }
-    window.addEventListener('beforeunload', onBeforeUnload)
-    return () => window.removeEventListener('beforeunload', onBeforeUnload)
+    if (!native.isTauri()) return
+    let unlisten: (() => void) | undefined
+
+    void (async () => {
+      const appWindow = getCurrentWindow()
+      unlisten = await appWindow.onCloseRequested(async (event) => {
+        const s = useApp.getState()
+        if (!s.dirty) return
+        event.preventDefault()
+        const discard = await confirm(
+          `“${s.fileName}” has unsaved marks. Close it anyway?`,
+          { title: 'Unsaved changes', kind: 'warning', okLabel: 'Discard', cancelLabel: 'Keep editing' },
+        )
+        if (discard) {
+          // The guard re-runs on the next request, so clear the flag first.
+          useApp.setState({ dirty: false })
+          await appWindow.destroy()
+        }
+      })
+    })()
+
+    return () => unlisten?.()
   }, [])
 
   return (

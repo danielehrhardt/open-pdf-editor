@@ -113,6 +113,7 @@ export function Toolbar() {
         </button>
         <button
           className="tool"
+          data-action="sign"
           aria-pressed={tool === 'signature'}
           onClick={pickSignature}
           title="Place a signature (⌘1)"

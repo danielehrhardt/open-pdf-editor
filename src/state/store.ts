@@ -100,7 +100,12 @@ export interface AppState {
 
   // ---- document lifecycle
   openPath: (path: string) => Promise<void>
-  openBytes: (bytes: Uint8Array, name: string, path?: string | null) => Promise<void>
+  openBytes: (
+    bytes: Uint8Array,
+    name: string,
+    path?: string | null,
+    options?: { quiet?: boolean; preserveView?: boolean },
+  ) => Promise<void>
   closeDocument: () => void
   save: (mode: 'save' | 'save-as') => Promise<void>
 
@@ -229,7 +234,8 @@ export const useApp = create<AppState>((set, get) => {
       }
     },
 
-    openBytes: async (bytes, name, path = null) => {
+    openBytes: async (bytes, name, path = null, options) => {
+      const keepView = options?.preserveView === true
       set({ status: 'loading', loadingLabel: 'Reading pages…' })
       try {
         const loaded = await loadPdf(bytes)
@@ -251,11 +257,11 @@ export const useApp = create<AppState>((set, get) => {
           dirty: false,
           past: [],
           future: [],
-          currentPage: 0,
           tool: 'select',
           pending: null,
+          ...(keepView ? {} : { currentPage: 0 }),
         })
-        if (loaded.fields.length > 0) {
+        if (!options?.quiet && loaded.fields.length > 0) {
           get().toast(
             `${loaded.fields.length} form field${loaded.fields.length === 1 ? '' : 's'} detected — click one to fill it in.`,
             'info',
@@ -319,17 +325,12 @@ export const useApp = create<AppState>((set, get) => {
 
         await native.writeFile(target!, bytes)
 
-        // The saved file is the new baseline: re-open it so further edits stack
-        // on top of what is actually on disk instead of the original bytes.
+        // Re-open what we just wrote. Without this the stamps stay in
+        // `elements` while `source` already contains them, so a second save
+        // would draw every signature twice.
         const name = target!.split('/').pop() ?? s.fileName
-        set({
-          source: bytes,
-          path: target!,
-          fileName: name,
-          writable: true,
-          dirty: false,
-          saving: false,
-        })
+        await get().openBytes(bytes, name, target!, { quiet: true, preserveView: true })
+        set({ saving: false })
         persistRecents(
           [{ path: target!, name, at: Date.now() }, ...s.recents.filter((r) => r.path !== target)].slice(0, 8),
         )

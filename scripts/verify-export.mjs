@@ -1,11 +1,15 @@
 /**
  * End-to-end proof that what you place is what gets written.
  *
- * Runs the real `buildPdf` from src/lib/export.ts against a fixture with every
- * page rotation, then rasterises the *result* with pdf.js and asserts the ink
- * is inside the requested view-space rect and nowhere else. This is the check
- * that catches a wrong rotation anchor, an inverted y-axis, or a CropBox that
- * was ignored — none of which a type-checker can see.
+ * Runs the real `buildPdf` from src/lib/export.ts over a fixture covering every
+ * page rotation plus an offset CropBox, then re-parses the *output* with pdf.js
+ * and reads the graphics-state matrix in force when the stamp is painted. That
+ * matrix maps the unit square onto the region the image actually occupies, so
+ * mapping its corners back through `pdfToView` must reproduce the rect the user
+ * dragged out — exactly, with no rasterisation tolerance.
+ *
+ * This is the check that catches a wrong rotation anchor, an inverted y-axis,
+ * or a CropBox that was ignored. None of those are visible to a type-checker.
  */
 import assert from 'node:assert/strict'
 import { mkdtemp, rm } from 'node:fs/promises'
@@ -17,11 +21,6 @@ import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs'
 
 installDomShims()
 
-/**
- * The app's modules use extensionless imports, which Vite resolves but Node
- * does not. Bundle exactly what the app ships rather than testing a rewritten
- * copy of it.
- */
 // Emitted inside the project so Node can still resolve `pdf-lib` from it.
 const workDir = await mkdtemp(path.join(process.cwd(), 'node_modules', '.inkwell-verify-'))
 const bundlePath = path.join(workDir, 'bundle.mjs')
@@ -29,7 +28,7 @@ await build({
   stdin: {
     contents:
       "export { buildPdf } from './src/lib/export.ts'\n" +
-      "export { viewSize } from './src/lib/geometry.ts'\n",
+      "export { viewSize, pdfToView } from './src/lib/geometry.ts'\n",
     resolveDir: process.cwd(),
     sourcefile: 'verify-entry.ts',
     loader: 'ts',
@@ -41,11 +40,12 @@ await build({
   external: ['pdf-lib'],
   logLevel: 'warning',
 })
-const { buildPdf, viewSize } = await import(bundlePath)
+const { buildPdf, viewSize, pdfToView } = await import(bundlePath)
 
 const ROTATIONS = [0, 90, 180, 270]
+const OPS = pdfjs.OPS
 
-/** Minimal browser surface the export path touches. */
+/** The export path only needs a canvas factory and the base64 helpers. */
 function installDomShims() {
   globalThis.document = {
     createElement(tag) {
@@ -53,11 +53,28 @@ function installDomShims() {
       return createCanvas(1, 1)
     },
   }
-  globalThis.atob = (b64) => Buffer.from(b64, 'base64').toString('binary')
-  globalThis.btoa = (bin) => Buffer.from(bin, 'binary').toString('base64')
+  globalThis.atob ??= (b64) => Buffer.from(b64, 'base64').toString('binary')
+  globalThis.btoa ??= (bin) => Buffer.from(bin, 'binary').toString('base64')
 }
 
-/** A solid red square as a PNG data URL. */
+/* --------------------------------------------------------------- matrices --- */
+
+/** `b` applied first, then `a` — pdf.js's `Util.transform` convention. */
+const mul = (a, b) => [
+  a[0] * b[0] + a[2] * b[1],
+  a[1] * b[0] + a[3] * b[1],
+  a[0] * b[2] + a[2] * b[3],
+  a[1] * b[2] + a[3] * b[3],
+  a[0] * b[4] + a[2] * b[5] + a[4],
+  a[1] * b[4] + a[3] * b[5] + a[5],
+]
+
+const applyMatrix = (m, x, y) => ({ x: m[0] * x + m[2] * y + m[4], y: m[1] * x + m[3] * y + m[5] })
+
+const IDENTITY = [1, 0, 0, 1, 0, 0]
+
+/* ---------------------------------------------------------------- fixture --- */
+
 function redSquarePng(size = 64) {
   const canvas = createCanvas(size, size)
   const g = canvas.getContext('2d')
@@ -70,16 +87,10 @@ async function buildFixture() {
   const doc = await PDFDocument.create()
   for (const rotation of ROTATIONS) {
     const page = doc.addPage([595.28, 841.89])
-    // Fill white so "no ink" is unambiguous.
-    page.drawRectangle({
-      x: 0,
-      y: 0,
-      width: 595.28,
-      height: 841.89,
-      color: rgb(1, 1, 1),
-    })
+    page.drawRectangle({ x: 0, y: 0, width: 595.28, height: 841.89, color: rgb(1, 1, 1) })
     page.node.set(PDFName.of('Rotate'), PDFNumber.of(rotation))
   }
+  // A CropBox that is both smaller than and offset within the MediaBox.
   const cropped = doc.addPage([612, 792])
   cropped.drawRectangle({ x: 0, y: 0, width: 612, height: 792, color: rgb(1, 1, 1) })
   cropped.node.set(PDFName.of('CropBox'), doc.context.obj([36, 48, 576, 744]))
@@ -94,64 +105,52 @@ function geometryFor(page) {
   return { pageNumber: page.pageNumber, view, rotation, viewWidth: width, viewHeight: height }
 }
 
-async function renderToPixels(bytes, pageNumber, scale) {
+/* ------------------------------------------------------------- inspection --- */
+
+/**
+ * Replays a page's operator list, tracking the CTM, and returns the matrix
+ * active at each image paint.
+ */
+async function imageMatrices(bytes, pageNumber) {
   const doc = await pdfjs.getDocument({ data: bytes.slice() }).promise
   const page = await doc.getPage(pageNumber)
-  const viewport = page.getViewport({ scale })
-  const canvas = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height))
-  const context = canvas.getContext('2d')
-  context.fillStyle = '#ffffff'
-  context.fillRect(0, 0, canvas.width, canvas.height)
-  await page.render({ canvas, canvasContext: context, viewport }).promise
-  const data = context.getImageData(0, 0, canvas.width, canvas.height).data
+  const { fnArray, argsArray } = await page.getOperatorList()
+
+  const found = []
+  const stack = []
+  let ctm = IDENTITY
+
+  for (let i = 0; i < fnArray.length; i++) {
+    const fn = fnArray[i]
+    if (fn === OPS.save) stack.push(ctm)
+    else if (fn === OPS.restore) ctm = stack.pop() ?? IDENTITY
+    else if (fn === OPS.transform) ctm = mul(ctm, argsArray[i])
+    else if (fn === OPS.paintImageXObject || fn === OPS.paintImageMaskXObject) found.push(ctm)
+  }
+
   await doc.destroy()
-  return { data, width: canvas.width, height: canvas.height }
+  return found
 }
 
-const isRed = (d, i) => d[i] > 180 && d[i + 1] < 90 && d[i + 2] < 90
+const close = (got, want, tolerance, what) =>
+  assert.ok(
+    Math.abs(got - want) <= tolerance,
+    `${what}: expected ${want.toFixed(4)}, got ${got.toFixed(4)} (Δ ${Math.abs(got - want).toFixed(4)})`,
+  )
 
-/** Bounding box of red pixels, in view space (undo the render scale). */
-function redBounds({ data, width, height }, scale) {
-  let minX = Infinity
-  let minY = Infinity
-  let maxX = -Infinity
-  let maxY = -Infinity
-  let count = 0
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      if (isRed(data, (y * width + x) * 4)) {
-        count++
-        if (x < minX) minX = x
-        if (x > maxX) maxX = x
-        if (y < minY) minY = y
-        if (y > maxY) maxY = y
-      }
-    }
-  }
-  if (count === 0) return null
-  return {
-    x: minX / scale,
-    y: minY / scale,
-    w: (maxX - minX + 1) / scale,
-    h: (maxY - minY + 1) / scale,
-    count,
-  }
-}
+/* ------------------------------------------------------------------- main --- */
 
 async function main() {
   const source = await buildFixture()
   const probe = await pdfjs.getDocument({ data: source.slice() }).promise
-
   const pages = []
-  for (let i = 1; i <= probe.numPages; i++) {
-    pages.push(geometryFor(await probe.getPage(i)))
-  }
+  for (let i = 1; i <= probe.numPages; i++) pages.push(geometryFor(await probe.getPage(i)))
   await probe.destroy()
 
   const src = redSquarePng()
 
-  // A deliberately off-centre, non-square rect: a wrong rotation cannot pass
-  // by symmetry.
+  // Deliberately off-centre and non-square: a wrong rotation cannot slip
+  // through on symmetry.
   const elements = pages.map((_geo, index) => ({
     id: `el${index}`,
     kind: 'signature',
@@ -161,7 +160,7 @@ async function main() {
     w: 200,
     h: 80,
     src,
-    aspect: 1,
+    aspect: 2.5,
     opacity: 1,
   }))
 
@@ -176,46 +175,47 @@ async function main() {
 
   assert.equal(warnings.length, 0, `unexpected warnings: ${warnings.join('; ')}`)
 
-  const scale = 2
-  const tolerance = 1.5 // points; rasterisation rounds edges
+  const tolerance = 1e-6
+  let assertions = 0
 
   for (let index = 0; index < pages.length; index++) {
     const geo = pages[index]
-    const pixels = await renderToPixels(bytes, index + 1, scale)
-    const found = redBounds(pixels, scale)
+    const label = `page ${index + 1} rot ${String(geo.rotation).padStart(3)}`
+    const matrices = await imageMatrices(bytes, index + 1)
 
-    assert.ok(found, `page ${index + 1} (rot ${geo.rotation}): nothing was drawn`)
+    assert.equal(matrices.length, 1, `${label}: expected exactly one stamp, saw ${matrices.length}`)
+    const m = matrices[0]
 
     const want = elements[index]
-    const label = `page ${index + 1} rot ${geo.rotation}`
-    assert.ok(
-      Math.abs(found.x - want.x) <= tolerance,
-      `${label}: left edge at ${found.x.toFixed(2)}, expected ${want.x}`,
-    )
-    assert.ok(
-      Math.abs(found.y - want.y) <= tolerance,
-      `${label}: top edge at ${found.y.toFixed(2)}, expected ${want.y}`,
-    )
-    assert.ok(
-      Math.abs(found.w - want.w) <= tolerance * 2,
-      `${label}: width ${found.w.toFixed(2)}, expected ${want.w}`,
-    )
-    assert.ok(
-      Math.abs(found.h - want.h) <= tolerance * 2,
-      `${label}: height ${found.h.toFixed(2)}, expected ${want.h}`,
-    )
+    // Image space is y-up with (0,0) at the bottom-left, so the unit square's
+    // corners correspond to these on-screen positions.
+    const expected = {
+      'bottom-left': { u: 0, v: 0, x: want.x, y: want.y + want.h },
+      'bottom-right': { u: 1, v: 0, x: want.x + want.w, y: want.y + want.h },
+      'top-right': { u: 1, v: 1, x: want.x + want.w, y: want.y },
+      'top-left': { u: 0, v: 1, x: want.x, y: want.y },
+    }
 
-    console.log(
-      `  ${label.padEnd(22)} ok  → x=${found.x.toFixed(1)} y=${found.y.toFixed(1)} ` +
-        `w=${found.w.toFixed(1)} h=${found.h.toFixed(1)}`,
-    )
+    for (const [corner, e] of Object.entries(expected)) {
+      const inPdf = applyMatrix(m, e.u, e.v)
+      const inView = pdfToView(inPdf, geo)
+      close(inView.x, e.x, tolerance, `${label} ${corner}.x`)
+      close(inView.y, e.y, tolerance, `${label} ${corner}.y`)
+      assertions += 2
+    }
+
+    console.log(`  ${label}  ok`)
   }
 
   await rm(workDir, { recursive: true, force: true })
-  console.log(`export OK — stamp landed correctly on ${pages.length} pages`)
+  console.log(
+    `export OK — ${assertions} corner assertions; stamps land exactly where ` +
+      `placed on ${pages.length} pages`,
+  )
 }
 
-main().catch((err) => {
+main().catch(async (err) => {
+  await rm(workDir, { recursive: true, force: true }).catch(() => {})
   console.error('export FAILED:', err.stack || err.message)
   process.exit(1)
 })
