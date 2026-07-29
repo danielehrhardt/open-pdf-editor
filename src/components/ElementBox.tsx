@@ -25,29 +25,31 @@ export function ElementBox({ element, zoom, selected, editing }: Props) {
   const removeElement = useApp((s) => s.removeElement)
 
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  /** Whether the editor has actually taken the caret yet — see below. */
-  const focused = useRef(false)
+  const wasEditing = useRef(false)
 
-  /**
-   * A newly placed text box opens its editor during the *pointerdown* that
-   * created it, while the browser still has a mousedown to dispatch. That
-   * mousedown's default action pulls focus onto the page, so focusing straight
-   * away means the editor is blurred out again within the same click. Waiting a
-   * frame lets the click finish first, and `focused` makes the blur handler
-   * ignore anything that arrives before the caret ever landed.
-   */
   useEffect(() => {
-    focused.current = false
-    if (!editing) return
-    const frame = requestAnimationFrame(() => {
+    if (editing && textareaRef.current) {
       const el = textareaRef.current
-      if (!el) return
       el.focus()
       el.setSelectionRange(el.value.length, el.value.length)
-      focused.current = true
-    })
-    return () => cancelAnimationFrame(frame)
+    }
   }, [editing])
+
+  /**
+   * Not every way out of the editor goes through a blur: clicking elsewhere on
+   * the page clears the selection, which unmounts the textarea before it can
+   * report anything. Without this an abandoned box would linger as an invisible,
+   * still-selectable rectangle.
+   */
+  useEffect(() => {
+    if (editing) {
+      wasEditing.current = true
+      return
+    }
+    if (!wasEditing.current) return
+    wasEditing.current = false
+    if (element.kind === 'text' && !element.text.trim()) removeElement(element.id)
+  }, [editing, element, removeElement])
 
   const commit = (text: string) => {
     const trimmed = text.replace(/\s+$/, '')
@@ -159,9 +161,6 @@ export function ElementBox({ element, zoom, selected, editing }: Props) {
           editing={editing}
           textareaRef={textareaRef}
           onCommit={commit}
-          onBlur={(text) => {
-            if (focused.current) commit(text)
-          }}
           onInput={(text) =>
             updateElement(element.id, { text } as Partial<TextElement>, { history: false })
           }
@@ -209,7 +208,6 @@ function TextBody({
   editing,
   textareaRef,
   onCommit,
-  onBlur,
   onInput,
 }: {
   element: TextElement
@@ -217,7 +215,6 @@ function TextBody({
   editing: boolean
   textareaRef: React.RefObject<HTMLTextAreaElement | null>
   onCommit: (text: string) => void
-  onBlur: (text: string) => void
   onInput: (text: string) => void
 }) {
   const font = cssFont(element.font, element.fontSize * zoom)
@@ -245,7 +242,7 @@ function TextBody({
         }}
         onPointerDown={(e) => e.stopPropagation()}
         onChange={(e) => onInput(e.target.value)}
-        onBlur={(e) => onBlur(e.target.value)}
+        onBlur={(e) => onCommit(e.target.value)}
         onKeyDown={(e) => {
           e.stopPropagation()
           if (e.key === 'Escape') {

@@ -78,10 +78,19 @@ export function PageView({ index, page, zoom, active, fields, elements, onPlace 
       }
       return
     }
-    // A placement click is not a selection gesture: without this the browser's
-    // own mousedown default moves focus to the page, which would blur a text
-    // editor we are about to open on this very click.
+    // A placement press is not a selection gesture, so keep the browser from
+    // starting a text selection over the page.
     e.preventDefault()
+  }
+
+  /**
+   * Placement waits for the click rather than the press. Pressing is where the
+   * browser decides who owns the caret, and the text tool opens an editor the
+   * moment it drops a box — running that on pointerdown meant the editor was
+   * focused and then immediately blurred by the very same click.
+   */
+  const handleClick = (e: React.MouseEvent) => {
+    if (!placing) return
     const rect = e.currentTarget.getBoundingClientRect()
     onPlace(index, (e.clientX - rect.left) / zoom, (e.clientY - rect.top) / zoom)
   }
@@ -93,6 +102,7 @@ export function PageView({ index, page, zoom, active, fields, elements, onPlace 
       data-placing={placing}
       style={{ width, height }}
       onPointerDown={handlePointerDown}
+      onClick={handleClick}
     >
       <canvas ref={canvasRef} className="page__canvas" style={{ width, height }} />
 
