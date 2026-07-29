@@ -1,0 +1,90 @@
+name: Bug report
+description: Something in Inkwell behaves wrongly
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. If the bug is about *where something landed* on the
+        page — a signature offset, text in the wrong place, a rotated page — the
+        PDF itself is by far the most useful thing you can attach.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: And what you expected instead.
+      placeholder: |
+        I dropped a signature on page 2, saved, and in Preview it sits about
+        20 pt lower than where I put it. Page 2 is rotated 90°.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open the attached PDF
+        2. Press S and draw a signature
+        3. Drop it on the signature line on page 2
+        4. ⌘S, then open the result in Preview
+    validations:
+      required: true
+
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where did this happen
+      options:
+        - The web app at pdfeditor.codext.de
+        - The web app running locally (npm run dev)
+        - The macOS app
+      default: 0
+    validations:
+      required: true
+
+  - type: input
+    id: env
+    attributes:
+      label: Browser and OS
+      description: >-
+        Browser and version, plus your OS. Skip the browser if this is the macOS
+        app. Chromium and Safari/Firefox differ in file-handling capabilities, so
+        this matters more than you might expect.
+      placeholder: Safari 18.3, macOS 15.3 (Apple silicon)
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Inkwell version
+      description: >-
+        For the macOS app, Inkwell → About Inkwell. For the hosted web app, just
+        say roughly when you used it — it always runs the latest build.
+      placeholder: v1.0.0
+    validations:
+      required: false
+
+  - type: textarea
+    id: file
+    attributes:
+      label: The PDF, if one is involved
+      description: >-
+        Drag the file into this box to attach it. If it is confidential, a
+        redacted version that still misbehaves works just as well — or say so and
+        we will find another way. Screenshots of the before/after also help.
+    validations:
+      required: false
+
+  - type: textarea
+    id: console
+    attributes:
+      label: Console output
+      description: >-
+        Any errors in the browser console (⌥⌘I → Console). Optional, but often
+        decisive.
+      render: text
+    validations:
+      required: false

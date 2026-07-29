@@ -1,0 +1,50 @@
+name: Feature request
+description: Suggest something Inkwell should be able to do
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Inkwell is deliberately small: open a PDF, sign it, fill it in, save it,
+        and nothing leaves the machine. Ideas that sharpen that are very welcome.
+        Two things are settled and won't change — the app makes no network
+        requests, and there are no accounts or subscriptions.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do
+      description: >-
+        The task, not the feature. Knowing what you were trying to get done often
+        reveals a simpler answer than the one either of us would have guessed.
+      placeholder: >-
+        I sign the same three-page contract every week and have to place my
+        signature and the date on each page by hand every time.
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you have in mind
+      description: How you picture it working. Sketches and screenshots welcome.
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you do today instead
+      description: The current workaround, and why it falls short.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Does it fit
+      options:
+        - label: This works without any network request — nothing gets uploaded.
+          required: true
+        - label: I searched the existing issues first.
+          required: true

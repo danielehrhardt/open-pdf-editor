@@ -3,7 +3,32 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "description": "Inkwell — fill out and sign PDFs on macOS",
+  "description": "Fill out PDFs and sign them, in the browser or as a macOS app. Nothing leaves your machine.",
+  "license": "MIT",
+  "author": "Daniel Ehrhardt",
+  "homepage": "https://pdfeditor.codext.de/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/danielehrhardt/open-pdf-editor.git"
+  },
+  "bugs": {
+    "url": "https://github.com/danielehrhardt/open-pdf-editor/issues"
+  },
+  "keywords": [
+    "pdf",
+    "pdf-editor",
+    "signature",
+    "esign",
+    "acroform",
+    "pdf-forms",
+    "privacy",
+    "offline",
+    "tauri",
+    "react"
+  ],
+  "engines": {
+    "node": ">=22.16.0"
+  },
   "scripts": {
     "sync-pdfjs": "node scripts/sync-pdfjs-assets.mjs",
     "dev": "npm run sync-pdfjs && vite",

@@ -71,7 +71,7 @@ jobs:
         id: dmg
         run: |
           dmg=$(find src-tauri/target/universal-apple-darwin/release/bundle/dmg \
-                  -name '*.dmg' -maxdepth 1 | head -n1)
+                  -maxdepth 1 -name '*.dmg' | head -n1)
           if [ -z "$dmg" ]; then
             echo "::error::no .dmg produced"
             find src-tauri/target/universal-apple-darwin/release/bundle -type f || true
@@ -80,25 +80,27 @@ jobs:
           echo "path=$dmg" >> "$GITHUB_OUTPUT"
           echo "Built $(basename "$dmg") ($(du -h "$dmg" | cut -f1))"
 
-      # Prefer the hand-written CHANGELOG section; fall back to generated notes.
+      # Use this version's CHANGELOG section as the notes. If there isn't one,
+      # leave them empty and let GitHub generate them from the commit log.
       - name: Assemble release notes
         id: notes
         run: |
           version="${{ steps.tag.outputs.tag }}"
           version="${version#v}"
-          if [ -f CHANGELOG.md ] && awk -v v="$version" '
-                $0 ~ "^## \\[?" v "\\]?" {found=1; next}
-                found && /^## / {exit}
-                found {print}
-              ' CHANGELOG.md | grep -q '[^[:space:]]'; then
+
+          : > notes.md
+          if [ -f CHANGELOG.md ]; then
             awk -v v="$version" '
-              $0 ~ "^## \\[?" v "\\]?" {found=1; next}
-              found && /^## / {exit}
-              found {print}
+              $0 ~ "^## \\[?" v "\\]?" { found = 1; next }
+              found && /^## /          { exit }
+              found                    { print }
             ' CHANGELOG.md > notes.md
+          fi
+
+          if grep -q '[^[:space:]]' notes.md; then
             echo "generate=false" >> "$GITHUB_OUTPUT"
           else
-            : > notes.md
+            echo "::notice::no CHANGELOG section for $version — generating notes"
             echo "generate=true" >> "$GITHUB_OUTPUT"
           fi
 
