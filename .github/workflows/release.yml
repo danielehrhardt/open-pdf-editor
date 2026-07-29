@@ -1,0 +1,141 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to build and attach the app to (e.g. v1.0.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build macOS app and publish release
+    runs-on: macos-latest
+    steps:
+      - name: Resolve tag
+        id: tag
+        run: echo "tag=${{ inputs.tag || github.ref_name }}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
+          fetch-depth: 0
+
+      # A tag that disagrees with the manifests would ship a .dmg whose
+      # filename and About box contradict the release it hangs under.
+      - name: Check tag matches the manifests
+        run: |
+          tag="${{ steps.tag.outputs.tag }}"
+          want="${tag#v}"
+          pkg=$(node -p "require('./package.json').version")
+          conf=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          cargo=$(grep -m1 '^version = ' src-tauri/Cargo.toml | cut -d'"' -f2)
+          echo "tag=$want package.json=$pkg tauri.conf.json=$conf Cargo.toml=$cargo"
+          for got in "$pkg" "$conf" "$cargo"; do
+            if [ "$got" != "$want" ]; then
+              echo "::error::version mismatch — tag says $want, a manifest says $got"
+              exit 1
+            fi
+          done
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      # Don't ship a build that fails its own geometry and export checks.
+      - name: Test
+        run: npm test
+
+      # Universal binary: one .dmg that runs on both Apple silicon and Intel.
+      - name: Build app
+        run: npm run tauri -- build --target universal-apple-darwin
+
+      - name: Locate the .dmg
+        id: dmg
+        run: |
+          dmg=$(find src-tauri/target/universal-apple-darwin/release/bundle/dmg \
+                  -name '*.dmg' -maxdepth 1 | head -n1)
+          if [ -z "$dmg" ]; then
+            echo "::error::no .dmg produced"
+            find src-tauri/target/universal-apple-darwin/release/bundle -type f || true
+            exit 1
+          fi
+          echo "path=$dmg" >> "$GITHUB_OUTPUT"
+          echo "Built $(basename "$dmg") ($(du -h "$dmg" | cut -f1))"
+
+      # Prefer the hand-written CHANGELOG section; fall back to generated notes.
+      - name: Assemble release notes
+        id: notes
+        run: |
+          version="${{ steps.tag.outputs.tag }}"
+          version="${version#v}"
+          if [ -f CHANGELOG.md ] && awk -v v="$version" '
+                $0 ~ "^## \\[?" v "\\]?" {found=1; next}
+                found && /^## / {exit}
+                found {print}
+              ' CHANGELOG.md | grep -q '[^[:space:]]'; then
+            awk -v v="$version" '
+              $0 ~ "^## \\[?" v "\\]?" {found=1; next}
+              found && /^## / {exit}
+              found {print}
+            ' CHANGELOG.md > notes.md
+            echo "generate=false" >> "$GITHUB_OUTPUT"
+          else
+            : > notes.md
+            echo "generate=true" >> "$GITHUB_OUTPUT"
+          fi
+
+          cat >> notes.md <<'EOF'
+
+          ---
+
+          ### Install
+
+          **Web** — nothing to install: **[pdfeditor.codext.de](https://pdfeditor.codext.de/)**
+
+          **macOS** — download the `.dmg` below and drag Inkwell to Applications.
+          The app is not signed with an Apple Developer certificate, so the first
+          launch needs one extra step:
+
+          > **right-click Inkwell.app → Open → Open**
+
+          or, from a terminal:
+
+          ```bash
+          xattr -dr com.apple.quarantine /Applications/Inkwell.app
+          ```
+
+          Requires macOS 11 or later. Universal — Apple silicon and Intel.
+          EOF
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ steps.tag.outputs.tag }}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release edit "$tag" --notes-file notes.md
+          elif [ "${{ steps.notes.outputs.generate }}" = "true" ]; then
+            gh release create "$tag" --title "Inkwell $tag" \
+              --notes-file notes.md --generate-notes
+          else
+            gh release create "$tag" --title "Inkwell $tag" --notes-file notes.md
+          fi
+          gh release upload "$tag" "${{ steps.dmg.outputs.path }}" --clobber

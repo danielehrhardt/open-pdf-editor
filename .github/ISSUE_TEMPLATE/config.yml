@@ -1,0 +1,14 @@
+blank_issues_enabled: true
+
+contact_links:
+  - name: Try the live app
+    url: https://pdfeditor.codext.de/
+    about: Check whether the problem still happens on the current deployment.
+
+  - name: Report a security vulnerability
+    url: https://github.com/danielehrhardt/open-pdf-editor/security/advisories/new
+    about: Please report vulnerabilities privately, not as a public issue.
+
+  - name: Read the contributing guide
+    url: https://github.com/danielehrhardt/open-pdf-editor/blob/main/CONTRIBUTING.md
+    about: How to set the project up, and the one invariant to know before changing placement code.

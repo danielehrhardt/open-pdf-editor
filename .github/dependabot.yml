@@ -1,0 +1,33 @@
+version: 2
+
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      # React, types and the Vite plugin move together; one PR, not five.
+      react:
+        patterns: ['react', 'react-dom', '@types/react', '@types/react-dom', '@vitejs/plugin-react']
+      tauri:
+        patterns: ['@tauri-apps/*']
+      dev:
+        dependency-type: development
+    ignore:
+      # public/pdfjs is synced from this exact version and the worker API is
+      # version-locked to the build — bump it deliberately, not automatically.
+      - dependency-name: pdfjs-dist
+
+  - package-ecosystem: cargo
+    directory: /src-tauri
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly

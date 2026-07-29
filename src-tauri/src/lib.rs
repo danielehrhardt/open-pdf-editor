@@ -4,7 +4,9 @@ use std::sync::Mutex;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use serde::Serialize;
 use tauri::ipc::{InvokeBody, Request, Response};
-use tauri::menu::{AboutMetadata, MenuBuilder, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
+use tauri::menu::{
+    AboutMetadata, MenuBuilder, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder,
+};
 use tauri::{Emitter, Manager, State};
 
 /// Files handed to us by the OS (Finder "Open With", dock drop) before the
@@ -35,7 +37,11 @@ fn is_writable(path: &Path) -> bool {
         std::fs::OpenOptions::new().write(true).open(path).is_ok()
     } else {
         path.parent()
-            .map(|p| p.metadata().map(|m| !m.permissions().readonly()).unwrap_or(false))
+            .map(|p| {
+                p.metadata()
+                    .map(|m| !m.permissions().readonly())
+                    .unwrap_or(false)
+            })
             .unwrap_or(false)
     }
 }
@@ -194,14 +200,12 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::
         .item(&PredefinedMenuItem::about(
             app,
             Some(&format!("About {}", pkg.name)),
-            Some(
-                AboutMetadata {
-                    name: Some(pkg.name.clone()),
-                    version: Some(pkg.version.to_string()),
-                    copyright: Some("Inkwell — sign and fill PDFs".into()),
-                    ..Default::default()
-                },
-            ),
+            Some(AboutMetadata {
+                name: Some(pkg.name.clone()),
+                version: Some(pkg.version.to_string()),
+                copyright: Some("Inkwell — sign and fill PDFs".into()),
+                ..Default::default()
+            }),
         )?)
         .separator()
         .item(&PredefinedMenuItem::hide(app, None)?)
