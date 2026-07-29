@@ -68,7 +68,9 @@
   --r-lg: 14px;
   --r-xl: 20px;
 
-  --titlebar-h: 50px;
+  /* Matches the traffic-light box macOS draws over the title bar: the lights are
+     centred on --titlebar-h / 2 via trafficLightPosition in tauri.conf.json. */
+  --titlebar-h: 44px;
   --toolbar-h: 52px;
 
   color-scheme: light dark;
@@ -198,20 +200,11 @@ textarea {
 }
 
 /* The desktop window overlays its traffic lights on the title bar; the browser
-   has no window controls to clear, so the title starts at the edge there. */
+   has no window controls to clear, so the title starts at the edge there.
+   Keep this in step with trafficLightPosition.x in tauri.conf.json: the lights
+   run from x to x + 54, and the title wants air after them. */
 :root[data-host='tauri'] .titlebar {
-  padding-left: 84px;
-}
-
-.titlebar__drag {
-  position: absolute;
-  inset: 0;
-  -webkit-app-region: drag;
-}
-
-.titlebar > *:not(.titlebar__drag) {
-  position: relative;
-  -webkit-app-region: no-drag;
+  padding-left: 88px;
 }
 
 .titlebar__doc {

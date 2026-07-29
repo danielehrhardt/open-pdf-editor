@@ -17,9 +17,9 @@ export function TitleBar({ onOpen }: { onOpen: () => void }) {
   const ready = status === 'ready'
 
   return (
-    <header className="titlebar">
-      <div className="titlebar__drag" />
-
+    // "deep" makes the whole bar a drag handle; Tauri stops the walk at buttons,
+    // so the controls below keep working. WKWebView ignores -webkit-app-region.
+    <header className="titlebar" data-tauri-drag-region="deep">
       {ready ? (
         <div className="titlebar__doc">
           <span className="titlebar__name" title={fileName}>

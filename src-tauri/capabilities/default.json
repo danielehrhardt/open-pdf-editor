@@ -1,13 +1,14 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capabilities the Inkwell window needs: native file pickers, revealing saved files in Finder, and closing the window (Tauri's onCloseRequested path calls destroy(), which is not part of core:window:default).",
+  "description": "Capabilities the Inkwell window needs: native file pickers, revealing saved files in Finder, dragging the window by its title bar, and closing the window (Tauri's onCloseRequested path calls destroy(), which is not part of core:window:default).",
   "windows": [
     "main"
   ],
   "permissions": [
     "core:default",
     "core:window:allow-set-title",
+    "core:window:allow-start-dragging",
     "core:window:allow-close",
     "core:window:allow-destroy",
     "core:webview:allow-internal-toggle-devtools",
