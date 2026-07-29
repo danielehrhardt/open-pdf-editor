@@ -95,6 +95,11 @@ jobs:
               found && /^## /          { exit }
               found                    { print }
             ' CHANGELOG.md > notes.md
+            # The section body uses shortcut references like [perfect-freehand][pf]
+            # whose definitions live at the end of the file, outside the section.
+            # Carry them along or they render as literal brackets. Definitions do
+            # not render, so unused ones cost nothing.
+            grep -E '^\[[^]]+\]: ' CHANGELOG.md >> notes.md
           fi
 
           if grep -q '[^[:space:]]' notes.md; then

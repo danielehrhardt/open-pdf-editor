@@ -1,0 +1,13 @@
+# Every pull request gets a review request from the maintainer.
+*                       @danielehrhardt
+
+# The invariant that what you see equals what gets written lives in these
+# files. Changes here need the verifiers to agree — see CONTRIBUTING.md.
+/src/lib/geometry.ts    @danielehrhardt
+/src/lib/export.ts      @danielehrhardt
+/scripts/verify-*.mjs   @danielehrhardt
+
+# Release, CI and the deployed security headers.
+/.github/               @danielehrhardt
+/public/_headers        @danielehrhardt
+/wrangler.jsonc         @danielehrhardt
