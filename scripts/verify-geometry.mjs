@@ -10,10 +10,34 @@
  *     corners exactly back on the view-space rect we asked for.
  */
 import assert from 'node:assert/strict'
+import { mkdtemp, rm } from 'node:fs/promises'
+import path from 'node:path'
+import { build } from 'esbuild'
 import { PDFDocument, PDFName, PDFNumber, PDFArray } from 'pdf-lib'
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs'
 
-import { drawAnchorForRect, pdfToView, viewToPdf, viewSize } from '../src/lib/geometry.ts'
+// geometry.ts is compiled rather than imported directly: Node strips types
+// unflagged only from 22.18, and .node-version pins 22.16. Same approach as
+// verify-export.mjs and verify-forms.mjs.
+// Emitted inside the project so Node can still resolve `pdf-lib` from it.
+const workDir = await mkdtemp(path.join(process.cwd(), 'node_modules', '.inkwell-verify-'))
+const bundlePath = path.join(workDir, 'bundle.mjs')
+await build({
+  stdin: {
+    contents:
+      "export { drawAnchorForRect, pdfToView, viewToPdf, viewSize } from './src/lib/geometry.ts'\n",
+    resolveDir: process.cwd(),
+    sourcefile: 'verify-entry.ts',
+    loader: 'ts',
+  },
+  bundle: true,
+  format: 'esm',
+  platform: 'node',
+  outfile: bundlePath,
+  external: ['pdf-lib'],
+  logLevel: 'warning',
+})
+const { drawAnchorForRect, pdfToView, viewToPdf, viewSize } = await import(bundlePath)
 
 const EPSILON = 1e-6
 const ROTATIONS = [0, 90, 180, 270]
@@ -140,11 +164,13 @@ async function main() {
   }
 
   await doc.destroy()
+  await rm(workDir, { recursive: true, force: true })
   console.log(`geometry OK — ${checks} assertions across ${doc.numPages} pages`)
 }
 
-main().catch((err) => {
-  console.error('geometry FAILED:', err.message)
+main().catch(async (err) => {
+  await rm(workDir, { recursive: true, force: true }).catch(() => {})
+  console.error('geometry FAILED:', err.stack || err.message)
   process.exit(1)
 })
 
