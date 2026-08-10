@@ -463,6 +463,31 @@ textarea {
   flex-direction: column;
   align-items: center;
   gap: 4px;
+  position: relative;
+  cursor: grab;
+}
+.thumb:active {
+  cursor: grabbing;
+}
+/* The page being carried stays visible but recedes, so the drop line reads as
+   the live position rather than competing with it. */
+.thumb[data-dragging] {
+  opacity: 0.35;
+}
+.thumb[data-drop]::after {
+  content: '';
+  position: absolute;
+  left: -6px;
+  right: -6px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+.thumb[data-drop='before']::after {
+  top: -7px;
+}
+.thumb[data-drop='after']::after {
+  bottom: -7px;
 }
 .thumb__frame {
   width: 100%;
