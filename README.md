@@ -48,6 +48,10 @@ nudge, ⌘Z all the way back.
 **Text stays text.** Typed text is written as real PDF text in a standard font,
 so the result is still selectable and searchable — not a screenshot of words.
 
+**Pages in the order you want them.** Drag a thumbnail up or down the rail (or
+press `⌥↑` / `⌥↓`) to resort the document. Anything you placed on a page travels
+with it, form fields included, and the new order is what gets saved.
+
 ## Get it
 
 ### On the web
@@ -136,6 +140,7 @@ site data clears your signatures.
 | `⌘Z` `⇧⌘Z` | Undo · Redo |
 | `⌘+` `⌘-` `⌘0` | Zoom in · out · fit width |
 | Drag · Arrows · `⇧`Arrows | Move · nudge 1 pt · nudge 10 pt |
+| `⌥↑` `⌥↓` on a thumbnail | Move that page up · down |
 | `⏎` · `⌫` · `Esc` | Edit text · delete · cancel |
 | `⌘`-scroll or pinch | Zoom around the pointer |
 
@@ -150,7 +155,7 @@ the rotated space the reader sees, and the screen after zoom.
 `PageViewport`, and it is the only place the conversion happens. Elements are
 stored in unscaled view space, which makes them zoom-independent by construction.
 
-That claim is worth more than a comment, so it is tested three ways:
+That claim is worth more than a comment, so it is tested four ways:
 
 ```bash
 npm test
@@ -166,6 +171,9 @@ npm test
 - **`verify-forms.mjs`** — field values survive a round trip, appearance streams
   are regenerated, flattening bakes them into page content, and text baselines
   match the on-screen overlay exactly.
+- **`verify-page-order.mjs`** — a reordered document is written in the dragged
+  order, and stamps and form widgets stay on the page they belong to. Every page
+  in the fixture has a different size and rotation, so a mix-up cannot hide.
 
 Text baselines get the same treatment: the overlay and the exporter both call
 `baselineOffset()`, which reads the browser's own font metrics — the same numbers

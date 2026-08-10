@@ -34,7 +34,7 @@
     "dev": "npm run sync-pdfjs && vite",
     "build": "npm run sync-pdfjs && tsc -b && vite build",
     "typecheck": "tsc -b",
-    "test": "node scripts/verify-geometry.mjs && node scripts/verify-export.mjs && node scripts/verify-forms.mjs",
+    "test": "node scripts/verify-geometry.mjs && node scripts/verify-export.mjs && node scripts/verify-forms.mjs && node scripts/verify-page-order.mjs",
     "preview": "vite preview --port 4173",
     "web:build": "npm run build",
     "web:preview": "npm run build && vite preview --port 4173",

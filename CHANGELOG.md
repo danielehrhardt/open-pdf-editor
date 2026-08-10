@@ -5,6 +5,13 @@ All notable changes to Inkwell are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Reorder pages by dragging their thumbnails in the rail, with a drop line
+  showing where the page will land and `⌥↑` / `⌥↓` as the keyboard equivalent.
+  Stamps, text and form widgets travel with their page, the move is undoable,
+  and saving writes the file in the new order.
+
 ## [1.0.0] — 2026-07-29
 
 First public release. Inkwell runs as a native macOS app and as a static website

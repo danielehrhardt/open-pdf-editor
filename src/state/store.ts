@@ -4,6 +4,7 @@ import { create } from 'zustand'
 
 import { buildPdf, EncryptedPdfError } from '../lib/export'
 import { constrainToPage } from '../lib/geometry'
+import { movePageOrder } from '../lib/pages'
 import { measureBlock } from '../lib/text'
 import { loadPdf, PasswordRequiredError, type PDFDocumentProxy } from '../lib/pdf'
 import {
@@ -44,6 +45,10 @@ export interface PendingStamp {
 interface Snapshot {
   elements: PdfElement[]
   formValues: Record<string, FormValue>
+  /** Page order, so undoing a reorder puts the pages back. */
+  pages: PageGeometry[]
+  /** Field page indices move with the pages, so they travel together. */
+  fields: FormFieldInfo[]
 }
 
 interface Prefs {
@@ -130,6 +135,8 @@ export interface AppState {
   setZoom: (zoom: number, fitMode?: 'width' | 'page' | null) => void
   zoomBy: (factor: number) => void
   setCurrentPage: (page: number) => void
+  /** Moves the page at display index `from` to display index `to`. */
+  movePage: (from: number, to: number) => void
   toggleSidebar: () => void
   setStudioOpen: (open: boolean) => void
   setPrefs: (patch: Partial<Prefs>) => void
@@ -154,9 +161,13 @@ const ZOOM_STOPS = [0.25, 0.33, 0.5, 0.67, 0.8, 1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4
 export const useApp = create<AppState>((set, get) => {
   const initialPrefs = readPrefs()
 
+  // `pages` and `fields` are only ever replaced wholesale, so keeping the array
+  // itself is enough — no element of it is mutated in place.
   const snapshot = (): Snapshot => ({
     elements: get().elements.map((e) => ({ ...e })),
     formValues: { ...get().formValues },
+    pages: get().pages,
+    fields: get().fields,
   })
 
   const pushHistory = () => {
@@ -448,6 +459,8 @@ export const useApp = create<AppState>((set, get) => {
         future: [...future, snapshot()].slice(-HISTORY_LIMIT),
         elements: previous.elements,
         formValues: previous.formValues,
+        pages: previous.pages,
+        fields: previous.fields,
         dirty: true,
         editingId: null,
       })
@@ -462,6 +475,8 @@ export const useApp = create<AppState>((set, get) => {
         past: [...past, snapshot()].slice(-HISTORY_LIMIT),
         elements: next.elements,
         formValues: next.formValues,
+        pages: next.pages,
+        fields: next.fields,
         dirty: true,
         editingId: null,
       })
@@ -497,6 +512,20 @@ export const useApp = create<AppState>((set, get) => {
     },
 
     setCurrentPage: (page) => set({ currentPage: page }),
+
+    movePage: (from, to) => {
+      const move = movePageOrder(get().pages, from, to)
+      if (!move) return
+
+      pushHistory()
+      set((s) => ({
+        pages: move.pages,
+        elements: s.elements.map((el) => ({ ...el, page: move.remap(el.page) })),
+        fields: s.fields.map((f) => ({ ...f, page: move.remap(f.page) })),
+        currentPage: move.remap(s.currentPage),
+        dirty: true,
+      }))
+    },
 
     toggleSidebar: () => {
       const sidebar = !get().sidebar

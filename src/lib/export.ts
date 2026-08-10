@@ -28,6 +28,11 @@ import type { FontKey, FormFieldInfo, PageGeometry, PdfElement } from '../types'
 export interface ExportInput {
   /** Pristine bytes of the file as opened. */
   source: Uint8Array
+  /**
+   * Pages in the order they are shown, which is the order they are written in.
+   * Each entry's `pageNumber` still points at its slot in `source`, so this
+   * array doubles as the permutation to apply.
+   */
   pages: PageGeometry[]
   elements: PdfElement[]
   fields: FormFieldInfo[]
@@ -72,6 +77,7 @@ export async function buildPdf(input: ExportInput): Promise<ExportResult> {
 
   await applyFormValues(doc, input, warnings, getFont)
   await drawElements(doc, input, warnings, getFont, charsets)
+  applyPageOrder(doc, input.pages)
 
   if (input.flattenForm && input.fields.length > 0) {
     try {
@@ -172,7 +178,7 @@ async function drawElements(
   const pages = doc.getPages()
   const byPage = new Map<number, PdfElement[]>()
   for (const el of input.elements) {
-    if (el.page < 0 || el.page >= pages.length) continue
+    if (el.page < 0 || el.page >= input.pages.length) continue
     const list = byPage.get(el.page)
     if (list) list.push(el)
     else byPage.set(el.page, [el])
@@ -182,9 +188,11 @@ async function drawElements(
   let droppedChars = 0
 
   for (const [pageIndex, elements] of byPage) {
-    const page = pages[pageIndex]
+    // `pageIndex` is a position on screen; the page it names may sit elsewhere
+    // in the source file once the user has reordered the document.
     const geo = input.pages[pageIndex]
-    if (!geo) continue
+    const page = geo ? pages[geo.pageNumber - 1] : undefined
+    if (!geo || !page) continue
 
     isolateExistingContent(doc, page)
 
@@ -267,6 +275,35 @@ async function drawElements(
       `${droppedChars} character${droppedChars === 1 ? '' : 's'} could not be written with the ` +
         'selected font and became "?".',
     )
+  }
+}
+
+/**
+ * Rewrites the page tree so the file comes out in the order shown on screen.
+ *
+ * Pages are moved one at a time rather than by emptying the tree and refilling
+ * it: the document stays valid at every step, and a page keeps its identity, so
+ * annotations, form widgets and links that point at it survive the move.
+ */
+function applyPageOrder(doc: PDFDocument, order: PageGeometry[]) {
+  const original = doc.getPages()
+  if (order.length !== original.length) return
+
+  const desired = order.map((geo) => original[geo.pageNumber - 1])
+  if (desired.some((page) => !page)) return
+  // Untouched order: nothing to do, and nothing to risk.
+  if (desired.every((page, i) => page === original[i])) return
+
+  for (let target = 0; target < desired.length; target++) {
+    // Re-read each round: every move shifts the pages after it.
+    const current = doc.getPages()
+    if (current[target] === desired[target]) continue
+    const at = current.indexOf(desired[target])
+    // Unreachable for a well-formed permutation. Throwing beats saving a file
+    // whose pages are half-sorted, which the user would have no way to spot.
+    if (at < 0) throw new Error('The pages could not be reordered.')
+    doc.removePage(at)
+    doc.insertPage(target, desired[target])
   }
 }
 
