@@ -51,8 +51,8 @@
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "5.7.284",
     "perfect-freehand": "^1.2.3",
-    "react": "^19.3.0",
-    "react-dom": "^19.3.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
     "zustand": "^5.0.8"
   },
   "devDependencies": {
